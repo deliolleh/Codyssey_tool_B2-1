@@ -1,0 +1,10 @@
+# 실제 가계부 데이터 — 개인 금융 정보라 커밋 제외 (샘플은 추후 samples/로)
+data/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS / 에디터 (pyenv 경로 등 기기 전용 설정)
+.DS_Store
+.vscode/

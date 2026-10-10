@@ -1,0 +1,685 @@
+<title>제너레이터 스트리밍 — 양동이 vs 수도꼭지</title>
+<style>
+  :root {
+    --paper: #F3F6F5;
+    --surface: #FFFFFF;
+    --ink: #1B2628;
+    --muted: #5D6E70;
+    --line: #D6E0DF;
+    --accent: #0E7C86;
+    --accent-soft: #DCEEEF;
+    --warn: #B5452A;
+    --warn-soft: #F6E3DC;
+    --ok: #2E7D4F;
+    --ok-soft: #DFEEE4;
+    --code-bg: #122023;
+    --code-ink: #D7E6E4;
+    --code-accent: #6FD3DB;
+    --code-comment: #7A9499;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0F1719;
+      --surface: #162124;
+      --ink: #E3EDEC;
+      --muted: #93A7A8;
+      --line: #28383B;
+      --accent: #45BCC6;
+      --accent-soft: #143136;
+      --warn: #E0694A;
+      --warn-soft: #3A211A;
+      --ok: #5BBD85;
+      --ok-soft: #16301F;
+      --code-bg: #0B1416;
+      --code-ink: #CFE0DE;
+      --code-accent: #6FD3DB;
+      --code-comment: #628289;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0F1719;
+    --surface: #162124;
+    --ink: #E3EDEC;
+    --muted: #93A7A8;
+    --line: #28383B;
+    --accent: #45BCC6;
+    --accent-soft: #143136;
+    --warn: #E0694A;
+    --warn-soft: #3A211A;
+    --ok: #5BBD85;
+    --ok-soft: #16301F;
+    --code-bg: #0B1416;
+    --code-ink: #CFE0DE;
+    --code-accent: #6FD3DB;
+    --code-comment: #628289;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: system-ui, "Apple SD Gothic Neo", sans-serif;
+    line-height: 1.65;
+  }
+  .mono, code, pre, .chip, .stat b, .outline, .logline, button {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  main { max-width: 900px; margin: 0 auto; padding: 48px 20px 96px; }
+
+  header.hero { margin-bottom: 56px; }
+  .eyebrow {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 14px;
+  }
+  h1 {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: clamp(26px, 5vw, 40px);
+    line-height: 1.25; margin: 0 0 16px; letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+  h1 .vs { color: var(--muted); font-weight: 400; }
+  h1 .tap { color: var(--accent); }
+  .lede { max-width: 62ch; color: var(--muted); margin: 0; font-size: 16px; }
+  .lede strong { color: var(--ink); }
+
+  h2 {
+    font-size: 20px; margin: 72px 0 8px; letter-spacing: -0.01em;
+  }
+  h2 .no {
+    font-family: ui-monospace, Menlo, monospace;
+    color: var(--accent); font-size: 14px; margin-right: 10px;
+  }
+  .sub { color: var(--muted); margin: 0 0 24px; max-width: 64ch; }
+
+  /* ---------- 대결 데모 ---------- */
+  .duel { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 700px) { .duel { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 18px; display: flex; flex-direction: column; gap: 14px;
+  }
+  .panel h3 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .badge {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+    padding: 2px 8px; border-radius: 99px; letter-spacing: .05em;
+  }
+  .badge.bucket { background: var(--warn-soft); color: var(--warn); }
+  .badge.tap { background: var(--accent-soft); color: var(--accent); }
+  .panel .how { font-size: 13px; color: var(--muted); margin: -6px 0 0; }
+  .panel .how code { font-size: 12px; background: var(--paper); padding: 1px 5px; border-radius: 4px; }
+
+  .zone { border: 1px dashed var(--line); border-radius: 8px; padding: 10px 12px; }
+  .zone .zlabel {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+    display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px;
+  }
+  .ticks { display: flex; flex-wrap: wrap; gap: 3px; min-height: 28px; align-content: flex-start; }
+  .tick {
+    width: 22px; height: 7px; border-radius: 2px;
+    background: var(--line); transition: background .25s, outline .25s;
+  }
+  .tick.read { background: var(--accent); }
+  .tick.hot  { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .tick.mem  { background: var(--warn); }
+  .more { font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; margin-top: 6px; }
+
+  .gauge { height: 10px; border-radius: 99px; background: var(--paper); border: 1px solid var(--line); overflow: hidden; }
+  .gauge > i {
+    display: block; height: 100%; width: 0%;
+    background: var(--accent); transition: width .9s ease, background .3s;
+  }
+  .gauge > i.blown { background: var(--warn); }
+
+  .stats { display: flex; gap: 18px; flex-wrap: wrap; }
+  .stat { font-size: 12px; color: var(--muted); }
+  .stat b { display: block; font-size: 16px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .stat b.bad { color: var(--warn); }
+  .stat b.good { color: var(--accent); }
+
+  .outbox { min-height: 76px; }
+  .outline { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    opacity: 0; transform: translateY(4px); transition: opacity .3s, transform .3s; }
+  .outline.show { opacity: 1; transform: none; }
+
+  .verdict { font-size: 13px; border-radius: 8px; padding: 10px 12px; display: none; }
+  .verdict.show { display: block; }
+  .verdict.bad { background: var(--warn-soft); color: var(--warn); }
+  .verdict.good { background: var(--ok-soft); color: var(--ok); }
+
+  button {
+    appearance: none; border: 1px solid var(--accent); background: var(--accent);
+    color: var(--surface); font-size: 13px; padding: 8px 16px; border-radius: 7px;
+    cursor: pointer; transition: opacity .15s;
+  }
+  button.ghost { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btnrow { display: flex; gap: 8px; }
+
+  /* ---------- 파이프라인 스텝 데모 ---------- */
+  .board {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 18px;
+  }
+  .pipewrap { overflow-x: auto; padding-bottom: 6px; }
+  .pipe { display: flex; align-items: stretch; gap: 0; min-width: 640px; }
+  .stage {
+    flex: 1; border: 1.5px solid var(--line); border-radius: 8px;
+    padding: 8px 10px 10px; min-width: 104px; background: var(--paper);
+    transition: border-color .25s, box-shadow .25s;
+  }
+  .stage.asking { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .stage .sname { font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 700; }
+  .stage .srole { font-size: 11px; color: var(--muted); line-height: 1.4; margin-top: 2px; }
+  .slot { margin-top: 8px; min-height: 30px; display: flex; align-items: center; }
+  .conn {
+    width: 34px; flex: none; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 2px; position: relative;
+  }
+  .conn .pull, .conn .push {
+    font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+    transition: opacity .2s, transform .2s;
+  }
+  .conn .pull { color: var(--accent); opacity: .25; }
+  .conn .push { color: var(--muted); opacity: .25; }
+  .conn.pulling .pull { opacity: 1; transform: translateX(-3px); font-weight: 700; }
+  .conn.pushing .push { opacity: 1; transform: translateX(3px); color: var(--ink); font-weight: 700; }
+
+  .chip {
+    font-size: 11px; padding: 3px 7px; border-radius: 5px; white-space: nowrap;
+    background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent);
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  }
+  .chip.expense { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+  .chip.income  { background: var(--ok-soft);  color: var(--ok);  border-color: var(--ok); }
+  .chip.dead { opacity: .35; text-decoration: line-through; }
+
+  .pausebar {
+    margin-top: 12px; font-size: 12.5px; color: var(--muted);
+    border-left: 3px solid var(--accent); padding: 2px 0 2px 12px;
+  }
+  .pausebar b { color: var(--ink); }
+
+  .steprow { display: flex; gap: 8px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+  .counter { font-size: 12px; color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+  .counter b { color: var(--ink); }
+
+  .log {
+    margin-top: 14px; background: var(--code-bg); color: var(--code-ink);
+    border-radius: 8px; padding: 12px 14px; height: 150px; overflow-y: auto;
+    font-size: 12px;
+  }
+  .logline { display: block; line-height: 1.7; }
+  .logline.sys { color: var(--code-comment); }
+  .logline.pull { color: var(--code-accent); }
+  .logline.out { color: var(--code-ink); font-weight: 700; }
+
+  /* ---------- 코드 섹션 ---------- */
+  pre {
+    background: var(--code-bg); color: var(--code-ink); border-radius: 10px;
+    padding: 18px 20px; overflow-x: auto; font-size: 13px; line-height: 1.75; margin: 0;
+  }
+  pre .kw { color: var(--code-accent); }
+  pre .cm { color: var(--code-comment); }
+  .punchline {
+    margin-top: 20px; background: var(--surface); border: 1px solid var(--line);
+    border-left: 4px solid var(--accent); border-radius: 8px; padding: 14px 18px;
+    font-size: 14.5px; max-width: 70ch;
+  }
+  .punchline b { color: var(--accent); }
+
+  ul.takeaway { padding-left: 20px; max-width: 66ch; }
+  ul.takeaway li { margin-bottom: 10px; }
+  ul.takeaway code { background: var(--surface); border: 1px solid var(--line); padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }
+
+  footer { margin-top: 72px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; max-width: 70ch; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tick, .outline, .stage, .conn .pull, .conn .push, .gauge > i { transition: none; }
+  }
+</style>
+
+<main>
+  <header class="hero">
+    <p class="eyebrow">B2-1 · budget_app · 개념 시각화</p>
+    <h1>양동이로 퍼오기 <span class="vs">vs</span><br><span class="tap">수도꼭지 틀기</span></h1>
+    <p class="lede">거래 파일이 <strong>200,000줄</strong>일 때 <strong>최근 3건</strong>만 보고 싶다.
+    파일을 통째로 메모리에 올리는 방식과, 제너레이터로 <strong>필요한 만큼만 당겨 읽는</strong> 방식은
+    무엇이 다른가 — 직접 실행해보면서 비교합니다.</p>
+  </header>
+
+  <!-- ================= 1. 대결 데모 ================= -->
+  <section>
+    <h2><span class="no">01</span>같은 일, 다른 비용 — <span class="mono">list --limit 3</span></h2>
+    <p class="sub">두 패널 모두 "최근 거래 3건 출력"이라는 같은 일을 합니다.
+    각각 실행해보고 <b>읽은 줄 수</b>와 <b>메모리</b>를 비교해보세요.</p>
+
+    <div class="duel">
+      <!-- 양동이 -->
+      <div class="panel">
+        <h3>한 번에 읽기 <span class="badge bucket">readlines()</span></h3>
+        <p class="how"><code>lines = f.readlines()</code> — 일단 전부 퍼온다</p>
+        <div class="zone">
+          <div class="zlabel"><span>transactions.jsonl</span><span>200,000줄</span></div>
+          <div class="ticks" id="fileA"></div>
+          <div class="more">… 나머지 199,976줄</div>
+        </div>
+        <div class="zone">
+          <div class="zlabel"><span>메모리</span><span id="memLabelA">비어 있음</span></div>
+          <div class="gauge"><i id="gaugeA"></i></div>
+          <div class="ticks" id="memA" style="margin-top:8px"></div>
+        </div>
+        <div class="stats">
+          <div class="stat">파일에서 읽은 줄<b id="readA">0</b></div>
+          <div class="stat">메모리에 올라간 줄<b id="heldA">0</b></div>
+        </div>
+        <div class="zone outbox">
+          <div class="zlabel"><span>출력</span></div>
+          <div id="outA"></div>
+        </div>
+        <div class="verdict bad" id="verdictA">3건 보려고 <b>200,000줄 전부</b>를 메모리에 올렸다.
+        파일이 10배 커지면 메모리도 10배 — 언젠가 터진다.</div>
+        <div class="btnrow">
+          <button id="runA">실행</button>
+          <button class="ghost" id="resetA">리셋</button>
+        </div>
+      </div>
+
+      <!-- 수도꼭지 -->
+      <div class="panel">
+        <h3>제너레이터 스트리밍 <span class="badge tap">yield</span></h3>
+        <p class="how"><code>for line in read_lines(f)</code> — 필요할 때 한 줄씩</p>
+        <div class="zone">
+          <div class="zlabel"><span>transactions.jsonl</span><span>200,000줄</span></div>
+          <div class="ticks" id="fileB"></div>
+          <div class="more">… 나머지 199,976줄</div>
+        </div>
+        <div class="zone">
+          <div class="zlabel"><span>메모리</span><span id="memLabelB">비어 있음</span></div>
+          <div class="gauge"><i id="gaugeB"></i></div>
+          <div class="ticks" id="memB" style="margin-top:8px"></div>
+        </div>
+        <div class="stats">
+          <div class="stat">파일에서 읽은 줄<b id="readB">0</b></div>
+          <div class="stat">메모리에 올라간 줄<b id="heldB">0</b></div>
+        </div>
+        <div class="zone outbox">
+          <div class="zlabel"><span>출력</span></div>
+          <div id="outB"></div>
+        </div>
+        <div class="verdict good" id="verdictB">3건 채우자마자 <b>읽기를 멈췄다.</b>
+        나머지 199,997줄은 건드리지도 않았고, 메모리엔 항상 1줄뿐.
+        파일이 100배 커져도 비용은 그대로.</div>
+        <div class="btnrow">
+          <button id="runB">실행</button>
+          <button class="ghost" id="resetB">리셋</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 2. 파이프라인 스텝 데모 ================= -->
+  <section>
+    <h2><span class="no">02</span>읽기는 "당겨야" 일어난다 — <span class="mono">next()</span> 한 번씩 눌러보기</h2>
+    <p class="sub">제너레이터 체인은 <b>뒤에서 앞으로 당기는(pull)</b> 구조입니다.
+    <code class="mono">search --type expense</code>에서 지출 2건만 뽑는 상황 —
+    <b>next()</b>를 누를 때마다 요청이 왼쪽으로 전파되고, 데이터가 오른쪽으로 한 건 흘러갑니다.
+    income이 걸리면 filter가 버리고 <em>스스로 다시 당기는</em> 것도 지켜보세요.</p>
+
+    <div class="board">
+      <div class="pipewrap">
+        <div class="pipe" id="pipe">
+          <div class="stage" data-s="file">
+            <div class="sname">파일</div>
+            <div class="srole">6줄 (아직 안 읽음)</div>
+            <div class="slot" id="slot-file"></div>
+          </div>
+          <div class="conn" data-c="0"><span class="pull">◀ next()</span><span class="push">yield ▶</span></div>
+          <div class="stage" data-s="read">
+            <div class="sname">read_lines</div>
+            <div class="srole">한 줄 꺼내기</div>
+            <div class="slot" id="slot-read"></div>
+          </div>
+          <div class="conn" data-c="1"><span class="pull">◀ next()</span><span class="push">yield ▶</span></div>
+          <div class="stage" data-s="parse">
+            <div class="sname">parse</div>
+            <div class="srole">Transaction으로 변환</div>
+            <div class="slot" id="slot-parse"></div>
+          </div>
+          <div class="conn" data-c="2"><span class="pull">◀ next()</span><span class="push">yield ▶</span></div>
+          <div class="stage" data-s="filter">
+            <div class="sname">filter</div>
+            <div class="srole">expense만 통과</div>
+            <div class="slot" id="slot-filter"></div>
+          </div>
+          <div class="conn" data-c="3"><span class="pull">◀ next()</span><span class="push">yield ▶</span></div>
+          <div class="stage" data-s="take">
+            <div class="sname">take(2)</div>
+            <div class="srole">2건 차면 중단</div>
+            <div class="slot" id="slot-take"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pausebar" id="pausebar">
+        지금 상태: 제너레이터 체인은 <b>만들어져만 있고, 아무것도 안 읽었습니다.</b>
+        읽기는 next()가 당길 때만 일어납니다 — 이것이 "게으른(lazy) 평가".
+      </div>
+
+      <div class="steprow">
+        <button id="nextBtn">next() — 한 건 당기기</button>
+        <button class="ghost" id="resetPipe">처음부터</button>
+        <span class="counter">파일에서 읽음 <b id="pReads">0</b>/6 · 출력 <b id="pOuts">0</b>/2</span>
+      </div>
+
+      <div class="log" id="log"><span class="logline sys"># next()를 누르면 무슨 일이 일어나는지 여기 기록됩니다</span></div>
+    </div>
+  </section>
+
+  <!-- ================= 3. 코드 연결 ================= -->
+  <section>
+    <h2><span class="no">03</span>과제 코드에선 이렇게 생겼다</h2>
+    <p class="sub">budget_app 저장소 계층에 들어갈 읽기 함수의 뼈대입니다.</p>
+
+<pre><span class="kw">def</span> read_lines(path: Path) -&gt; Iterator[str]:
+    <span class="kw">with</span> open(path, encoding=<span class="kw">'utf-8'</span>) <span class="kw">as</span> f:
+        <span class="kw">for</span> line <span class="kw">in</span> f:          <span class="cm"># 파일 객체 자체가 이미 한 줄씩 읽는다</span>
+            <span class="kw">yield</span> line           <span class="cm"># ← 여기서 '일시정지'. 다음 next() 때 이 지점부터 재개</span>
+
+<span class="cm"># 쓰는 쪽: 소비자가 당기는 만큼만 읽힌다</span>
+<span class="kw">for</span> tx <span class="kw">in</span> take(parse_all(read_lines(data_path)), limit):
+    print(format_row(tx))        <span class="cm"># limit개 채우면 루프 종료 → 읽기도 멈춤</span></pre>
+
+    <div class="punchline">
+      <b>yield의 본질:</b> 함수가 값을 하나 내놓고 <b>그 자리에 멈춰 서는 것.</b>
+      return은 함수를 끝내지만, yield는 "다음 요청이 오면 여기서부터 계속"이라는
+      책갈피를 꽂아둔다. 그래서 200,000줄짜리 파일도 메모리에는 늘 "지금 보는 한 줄"만 존재한다.
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">04</span>이게 과제의 어디에 쓰이나</h2>
+    <ul class="takeaway">
+      <li><code>list --limit N</code> — 데모 01 그대로. N건 채우면 읽기 중단.</li>
+      <li><code>search --type --category …</code> — 데모 02 그대로. 필터를 제너레이터 체인으로 쌓는다.</li>
+      <li><code>summary --month</code> — 한 줄씩 읽으며 합계 dict에 누적. 전체를 올리지 않아도 집계 가능.</li>
+      <li>공통 수용 기준: <b>"저장 파일을 읽는 모든 경로가 제너레이터 기반"</b> — readlines() 같은 통째 읽기가 하나라도 있으면 위반.</li>
+    </ul>
+  </section>
+
+  <footer>
+    ※ 단순화 노트 — 데모 01은 "읽기 방식"만 비교합니다. 실제 과제의 list는 <b>최신순 정렬</b>이 필요해서
+    "정렬은 전체를 봐야 한다 vs 스트리밍" 사이의 긴장을 풀어야 하는데, 그게 harness.md의 <b>결정 3-1</b>입니다.
+    이 페이지는 그 결정의 재료가 되는 기초 개념만 다룹니다.
+  </footer>
+</main>
+
+<script>
+(function () {
+  const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const sleep = ms => new Promise(r => setTimeout(r, REDUCED ? 0 : ms));
+  const fmt = n => n.toLocaleString('ko-KR');
+
+  const SAMPLE = [
+    'TX-000012 | 2024-01-15 | expense | food | 15,000 | 점심',
+    'TX-000011 | 2024-01-14 | income | salary | 3,000,000 |',
+    'TX-000010 | 2024-01-12 | expense | transport | 20,000 |',
+  ];
+
+  // ---------- 공용: 틱 생성 ----------
+  function makeTicks(el, n) {
+    el.innerHTML = '';
+    const ts = [];
+    for (let i = 0; i < n; i++) {
+      const t = document.createElement('i');
+      t.className = 'tick';
+      el.appendChild(t); ts.push(t);
+    }
+    return ts;
+  }
+
+  // ---------- 패널 A: readlines ----------
+  const TOTAL = 200000;
+  const fileA = makeTicks(document.getElementById('fileA'), 24);
+  const memA = document.getElementById('memA');
+  const runA = document.getElementById('runA'), resetA = document.getElementById('resetA');
+  let busyA = false;
+
+  function clearA() {
+    fileA.forEach(t => t.className = 'tick');
+    memA.innerHTML = '';
+    document.getElementById('gaugeA').style.width = '0%';
+    document.getElementById('gaugeA').className = '';
+    document.getElementById('readA').textContent = '0';
+    document.getElementById('readA').className = '';
+    document.getElementById('heldA').textContent = '0';
+    document.getElementById('heldA').className = '';
+    document.getElementById('memLabelA').textContent = '비어 있음';
+    document.getElementById('outA').innerHTML = '';
+    document.getElementById('verdictA').classList.remove('show');
+  }
+
+  async function playA() {
+    if (busyA) return; busyA = true; runA.disabled = true;
+    clearA();
+    // 전체 읽기: 틱이 좌르륵
+    for (let i = 0; i < fileA.length; i++) {
+      fileA[i].classList.add('read');
+      if (!REDUCED && i % 3 === 0) await sleep(30);
+    }
+    // 카운터 트윈 + 메모리 폭증
+    const readEl = document.getElementById('readA'), heldEl = document.getElementById('heldA');
+    const gauge = document.getElementById('gaugeA');
+    gauge.style.width = '100%'; gauge.classList.add('blown');
+    const t0 = performance.now(), DUR = REDUCED ? 0 : 1100;
+    await new Promise(res => {
+      function frame(now) {
+        const p = DUR ? Math.min(1, (now - t0) / DUR) : 1;
+        const v = Math.round(TOTAL * (1 - Math.pow(1 - p, 3)));
+        readEl.textContent = fmt(v); heldEl.textContent = fmt(v);
+        const want = Math.ceil(p * 24);
+        while (memA.children.length < want) {
+          const t = document.createElement('i'); t.className = 'tick mem'; memA.appendChild(t);
+        }
+        if (p < 1) requestAnimationFrame(frame); else res();
+      }
+      requestAnimationFrame(frame);
+    });
+    heldEl.className = 'bad';
+    document.getElementById('memLabelA').textContent = '200,000줄 · 약 38 MB';
+    await sleep(250);
+    // 출력
+    const out = document.getElementById('outA');
+    for (const row of SAMPLE) {
+      const d = document.createElement('div'); d.className = 'outline'; d.textContent = row;
+      out.appendChild(d); await sleep(60); d.classList.add('show'); await sleep(240);
+    }
+    document.getElementById('verdictA').classList.add('show');
+    busyA = false; runA.disabled = false;
+  }
+  runA.addEventListener('click', playA);
+  resetA.addEventListener('click', () => { if (!busyA) clearA(); });
+
+  // ---------- 패널 B: 제너레이터 ----------
+  const fileB = makeTicks(document.getElementById('fileB'), 24);
+  const memB = document.getElementById('memB');
+  const runB = document.getElementById('runB'), resetB = document.getElementById('resetB');
+  let busyB = false;
+
+  function clearB() {
+    fileB.forEach(t => t.className = 'tick');
+    memB.innerHTML = '';
+    document.getElementById('gaugeB').style.width = '0%';
+    document.getElementById('readB').textContent = '0';
+    document.getElementById('heldB').textContent = '0';
+    document.getElementById('heldB').className = '';
+    document.getElementById('memLabelB').textContent = '비어 있음';
+    document.getElementById('outB').innerHTML = '';
+    document.getElementById('verdictB').classList.remove('show');
+  }
+
+  async function playB() {
+    if (busyB) return; busyB = true; runB.disabled = true;
+    clearB();
+    const out = document.getElementById('outB');
+    const heldEl = document.getElementById('heldB');
+    for (let i = 0; i < 3; i++) {
+      // 딱 한 줄만 읽힘
+      fileB[i].classList.add('hot');
+      await sleep(420);
+      fileB[i].classList.remove('hot');
+      fileB[i].classList.add('read');
+      document.getElementById('readB').textContent = String(i + 1);
+      // 메모리엔 그 한 줄만 (이전 줄은 교체)
+      memB.innerHTML = '';
+      const t = document.createElement('i'); t.className = 'tick read'; memB.appendChild(t);
+      heldEl.textContent = '1'; heldEl.className = 'good';
+      document.getElementById('gaugeB').style.width = '2.5%';
+      document.getElementById('memLabelB').textContent = '지금 보는 1줄뿐';
+      await sleep(260);
+      // 바로 출력
+      const d = document.createElement('div'); d.className = 'outline'; d.textContent = SAMPLE[i];
+      out.appendChild(d); await sleep(40); d.classList.add('show');
+      await sleep(320);
+    }
+    document.getElementById('verdictB').classList.add('show');
+    busyB = false; runB.disabled = false;
+  }
+  runB.addEventListener('click', playB);
+  resetB.addEventListener('click', () => { if (!busyB) clearB(); });
+
+  // ---------- 파이프라인 스텝 데모 ----------
+  const LINES = [
+    { raw: '{"id":"TX-06","type":"expense","cat":"food","amt":15000}',   type: 'expense', label: 'expense · food · 15,000' },
+    { raw: '{"id":"TX-05","type":"income","cat":"salary","amt":3000000}', type: 'income',  label: 'income · salary · 3,000,000' },
+    { raw: '{"id":"TX-04","type":"income","cat":"bonus","amt":100000}',  type: 'income',  label: 'income · bonus · 100,000' },
+    { raw: '{"id":"TX-03","type":"expense","cat":"transport","amt":20000}', type: 'expense', label: 'expense · transport · 20,000' },
+    { raw: '{"id":"TX-02","type":"expense","cat":"food","amt":8000}',    type: 'expense', label: 'expense · food · 8,000' },
+    { raw: '{"id":"TX-01","type":"income","cat":"salary","amt":3000000}', type: 'income',  label: 'income · salary · 3,000,000' },
+  ];
+  const TARGET = 2;
+  let pIdx = 0, pOut = 0, pBusy = false, pDone = false;
+
+  const stages = {};
+  document.querySelectorAll('.stage').forEach(s => stages[s.dataset.s] = s);
+  const conns = [...document.querySelectorAll('.conn')];
+  const log = document.getElementById('log');
+  const nextBtn = document.getElementById('nextBtn');
+  const pausebar = document.getElementById('pausebar');
+
+  function addLog(text, cls) {
+    const s = document.createElement('span');
+    s.className = 'logline' + (cls ? ' ' + cls : '');
+    s.textContent = text;
+    log.appendChild(s); log.scrollTop = log.scrollHeight;
+  }
+  function slot(name) { return document.getElementById('slot-' + name); }
+  function chip(line, extraCls) {
+    const c = document.createElement('span');
+    c.className = 'chip ' + (line.type || '') + (extraCls ? ' ' + extraCls : '');
+    c.textContent = line.label;
+    return c;
+  }
+  async function flash(el, cls, ms) { el.classList.add(cls); await sleep(ms); el.classList.remove(cls); }
+
+  async function pullWave(fromConn) {
+    // 요청이 오른쪽(take)에서 왼쪽(file)으로 전파
+    for (let i = fromConn; i >= 0; i--) {
+      stages[['read','parse','filter','take'][i]].classList.add('asking');
+      await flash(conns[i], 'pulling', 300);
+      stages[['read','parse','filter','take'][i]].classList.remove('asking');
+    }
+  }
+
+  async function stepNext() {
+    if (pBusy || pDone) return;
+    pBusy = true; nextBtn.disabled = true;
+    pausebar.innerHTML = '동작 중 — 로그를 보세요.';
+    addLog('> for 루프가 take(2)에 next() 요청', 'pull');
+    await pullWave(3);
+    addLog('  take → filter → parse → read_lines → 파일, 요청이 끝까지 전파됨', 'pull');
+
+    while (true) {
+      if (pIdx >= LINES.length) { pDone = true; addLog('# 파일 끝(StopIteration) — 체인 전체 종료', 'sys'); break; }
+      const line = LINES[pIdx++];
+      document.getElementById('pReads').textContent = String(pIdx);
+
+      // 파일 → read_lines
+      const rawChip = document.createElement('span');
+      rawChip.className = 'chip'; rawChip.textContent = line.raw.slice(0, 22) + '…';
+      slot('read').innerHTML = ''; slot('read').appendChild(rawChip);
+      await flash(conns[0], 'pushing', 320);
+      addLog(`  파일이 ${pIdx}번째 줄을 yield (이제 겨우 읽힘)`);
+
+      // read_lines → parse
+      await sleep(240);
+      slot('read').innerHTML = '';
+      slot('parse').innerHTML = ''; slot('parse').appendChild(chip(line));
+      await flash(conns[1], 'pushing', 320);
+      addLog('  parse가 JSON → Transaction으로 변환해 yield');
+
+      // parse → filter
+      await sleep(240);
+      slot('parse').innerHTML = '';
+      slot('filter').innerHTML = ''; slot('filter').appendChild(chip(line));
+      await flash(conns[2], 'pushing', 320);
+
+      if (line.type !== 'expense') {
+        // 탈락 → filter가 스스로 다시 당김
+        const c = slot('filter').firstChild; c.classList.add('dead');
+        addLog(`  ✗ ${line.type} — filter가 버림. 아직 줄 게 없으니 filter가 다시 next()를 당김`, 'pull');
+        await sleep(560);
+        slot('filter').innerHTML = '';
+        await pullWave(1);
+        continue;
+      }
+
+      // 통과 → take
+      addLog('  ✓ expense — filter 통과, take로 yield');
+      await sleep(300);
+      slot('filter').innerHTML = '';
+      pOut++;
+      const kept = chip(line); slot('take').appendChild(kept);
+      await flash(conns[3], 'pushing', 320);
+      document.getElementById('pOuts').textContent = String(pOut);
+      addLog(`출력 ${pOut}/${TARGET}: ${line.label}`, 'out');
+      break;
+    }
+
+    if (pOut >= TARGET && !pDone) {
+      pDone = true;
+      addLog(`# take(2) 가득 참 — 루프 종료. 파일은 ${pIdx}/${LINES.length}줄만 읽음. 나머지는 영원히 안 읽힘`, 'sys');
+      pausebar.innerHTML = `끝. <b>${LINES.length}줄 중 ${pIdx}줄만 읽고 멈췄습니다.</b>
+        각 제너레이터는 마지막 yield 지점에 책갈피를 꽂은 채 그대로 버려집니다 —
+        당기는 쪽이 멈추면 읽기도 멈춘다, 이게 pull 구조의 힘입니다.`;
+      nextBtn.textContent = '완료 — 처음부터 다시 보려면 리셋';
+    } else if (!pDone) {
+      pausebar.innerHTML = `모든 제너레이터가 <b>yield에서 일시정지</b> 중입니다.
+        다음 next()가 오기 전까지 파일은 단 한 줄도 더 읽히지 않습니다. (지금까지 ${pIdx}/6줄)`;
+      nextBtn.disabled = false;
+    } else {
+      nextBtn.textContent = '완료 — 처음부터 다시 보려면 리셋';
+    }
+    pBusy = false;
+    if (!pDone) nextBtn.disabled = false;
+  }
+
+  function resetPipe() {
+    if (pBusy) return;
+    pIdx = 0; pOut = 0; pDone = false;
+    ['file','read','parse','filter','take'].forEach(n => slot(n) && (slot(n).innerHTML = ''));
+    document.getElementById('pReads').textContent = '0';
+    document.getElementById('pOuts').textContent = '0';
+    log.innerHTML = '<span class="logline sys"># next()를 누르면 무슨 일이 일어나는지 여기 기록됩니다</span>';
+    nextBtn.textContent = 'next() — 한 건 당기기';
+    nextBtn.disabled = false;
+    pausebar.innerHTML = '지금 상태: 제너레이터 체인은 <b>만들어져만 있고, 아무것도 안 읽었습니다.</b> 읽기는 next()가 당길 때만 일어납니다 — 이것이 "게으른(lazy) 평가".';
+  }
+  nextBtn.addEventListener('click', stepNext);
+  document.getElementById('resetPipe').addEventListener('click', resetPipe);
+})();
+</script>
