@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Iterator
 
+from budget_app.decorators import translates_oserrors
 from budget_app.errors import StorageError
 
 TRANSACTIONS = 'transactions.jsonl'
@@ -31,6 +32,7 @@ class Storage:
     def path(self, filename: str) -> Path:
         return self.data_dir / filename
 
+    @translates_oserrors
     def ensure_files(self) -> list[str]:
         """없는 저장 파일을 만들고, 새로 만든 파일 이름들을 돌려준다."""
         created: list[str] = []
@@ -42,10 +44,13 @@ class Storage:
                 created.append(name)
         return created
 
+    @translates_oserrors
     def iter_records(self, filename: str) -> Iterator[dict]:
         """JSONL 파일을 한 줄씩 읽어 dict로 yield한다.
 
         파일 전체를 메모리에 올리지 않는다 — 소비자가 당기는 만큼만 읽힌다.
+        제너레이터라서 open()의 OSError도 첫 next() 시점에 난다 — 번역 데코레이터가
+        제너레이터 형태로 감싸는 이유.
         """
         with open(self.path(filename), encoding='utf-8') as f:
             for line_no, line in enumerate(f, start=1):
@@ -60,6 +65,7 @@ class Storage:
                         hint='파일이 손상됐을 수 있습니다. 해당 줄을 확인하세요',
                     ) from None
 
+    @translates_oserrors
     def append_record(self, filename: str, record: dict) -> None:
         """파일 끝에 레코드 한 줄을 덧붙인다."""
         with open(self.path(filename), 'a', encoding='utf-8') as f:
@@ -86,6 +92,7 @@ class Storage:
         self._write_meta(number)
         return number
 
+    @translates_oserrors
     def _write_meta(self, last_tx_no: int) -> None:
         # 한 줄짜리 파일 전체 덮어쓰기. 원자적 교체로의 강화는 결정 8-2에서 다룬다.
         with open(self.path(META), 'w', encoding='utf-8') as f:
