@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from budget_app import models
 from budget_app import storage as st
 from budget_app.decorators import logged, timed
+from budget_app.errors import ValidationError
 
 # 결정 0-5 부속: 토스 '내 소비' 대분류를 한 단어로 축약한 기본 카테고리.
 # 계층 없는 1단 평면 구조 — 세분화는 사용자가 category add로 같은 평면에 추가한다.
@@ -41,3 +43,64 @@ def initialize(store: st.Storage) -> InitReport:
             store.append_record(st.CATEGORIES, {'name': name})
         report.seeded_categories = list(DEFAULT_CATEGORIES)
     return report
+
+
+def category_registered(store: st.Storage, name: str) -> bool:
+    """카테고리 등록 여부. any()라 일치하는 줄을 만나면 더 읽지 않는다."""
+    return any(record.get('name') == name for record in store.iter_records(st.CATEGORIES))
+
+
+def list_categories(store: st.Storage) -> list[str]:
+    return [record['name'] for record in store.iter_records(st.CATEGORIES) if 'name' in record]
+
+
+@timed
+@logged
+def add_category(store: st.Storage, name: str) -> str:
+    """카테고리를 등록한다. add의 등록 유도(결정 2-3)와 category add가 같이 쓰는 입구."""
+    name = name.strip()
+    if not name:
+        raise ValidationError('카테고리 이름이 비어 있습니다', hint='한 단어 이름을 입력하세요 (예: 식비)')
+    if category_registered(store, name):
+        raise ValidationError(f'이미 존재하는 카테고리입니다: {name}',
+                              hint='category list로 현재 목록을 확인하세요')
+    store.append_record(st.CATEGORIES, {'name': name})
+    return name
+
+
+@timed
+@logged
+def add_transaction(
+    store: st.Storage,
+    *,
+    date: str,
+    tx_type: str,
+    category: str,
+    amount: str | int,
+    memo: str = '',
+    tags: list[str] | None = None,
+) -> models.Transaction:
+    """거래 추가의 단일 입구 — 대화형 add든 CSV import든 전부 여기를 지난다.
+
+    검증은 모델의 검사기를 빌려 다시 거친다(CLI가 이미 검증했어도).
+    저장 순서(결정 0-4): 카운터 선점 → 거래 append — 중간에 죽어도 번호 구멍만 남는다.
+    """
+    # 1) 전부 검증 — 하나라도 실패하면 카운터를 건드리기 전에 중단 (번호 낭비 없음)
+    valid_type = models.validate_type(tx_type)
+    valid_date = models.validate_date(date)
+    valid_amount = models.validate_amount(amount)
+    if not category_registered(store, category):
+        raise ValidationError(f'등록되지 않은 카테고리입니다: {category}',
+                              hint='category add로 먼저 등록하세요')
+    # 2) 카운터 선점 → 3) append (결정 0-4: 이 사이에 죽으면 중복 대신 무해한 구멍)
+    tx = models.Transaction(
+        id=models.format_tx_id(store.claim_tx_number()),
+        type=valid_type,
+        date=valid_date,
+        amount=valid_amount,
+        category=category,
+        memo=memo.strip(),
+        tags=list(tags or []),
+    )
+    store.append_record(st.TRANSACTIONS, tx.to_record())
+    return tx
