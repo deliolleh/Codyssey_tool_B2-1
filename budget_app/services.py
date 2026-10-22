@@ -46,6 +46,95 @@ def initialize(store: st.Storage) -> InitReport:
     return report
 
 
+def _recency_key(tx: models.Transaction) -> tuple[str, str]:
+    """최신순 정렬 키 (결정 3-2): 날짜 우선, 같으면 id(생성 순) — 둘 다 고정폭 문자열이라 비교 가능."""
+    return (tx.date, tx.id)
+
+
+def _iter_transactions(store: st.Storage):
+    """저장 레코드를 Transaction 스트림으로 — 모든 조회의 공통 수원(水源)."""
+    return (models.Transaction.from_record(r) for r in store.iter_records(st.TRANSACTIONS))
+
+
+# ----- 검색 거름망 (결정 4-2: 조건 하나 = 거름망 하나, None이면 통과) -----
+
+def _filter_period(stream, date_from: str | None, date_to: str | None):
+    for tx in stream:
+        if date_from is not None and tx.date < date_from:
+            continue
+        if date_to is not None and tx.date > date_to:
+            continue
+        yield tx
+
+
+def _filter_type(stream, tx_type: str | None):
+    for tx in stream:
+        if tx_type is None or tx.type == tx_type:
+            yield tx
+
+
+def _filter_category(stream, category: str | None):
+    for tx in stream:
+        if category is None or tx.category == category:
+            yield tx
+
+
+def _filter_query(stream, query: str | None):
+    """메모 글자 부분일치, 대소문자 무시 (결정 4-3)."""
+    needle = query.casefold() if query is not None else None
+    for tx in stream:
+        if needle is None or needle in tx.memo.casefold():
+            yield tx
+
+
+def _filter_tag(stream, tag: str | None):
+    """태그도 부분일치 + 대소문자 무시 (결정 4-3: 메모와 같은 철학으로 통일)."""
+    needle = tag.casefold() if tag is not None else None
+    for tx in stream:
+        if needle is None or any(needle in t.casefold() for t in tx.tags):
+            yield tx
+
+
+@timed
+@logged
+def search_transactions(
+    store: st.Storage,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    tx_type: str | None = None,
+    category: str | None = None,
+    query: str | None = None,
+    tag: str | None = None,
+    limit: int | None = None,
+) -> list[models.Transaction]:
+    """조건 검색 (모든 조건 AND, 결정 4-1). 결과는 최신순.
+
+    거름망 5장을 쌓은 파이프라인 — 각 거래는 한 건씩 흘러가며 거름망마다
+    "그 줄만 보면 확정되는" 판정을 받는다. limit 없으면 매칭 전부(메모리 O(결과 수)),
+    있으면 선발 명단(O(limit)) (결정 4-4).
+    """
+    if date_from is not None:
+        date_from = models.validate_date(date_from)
+    if date_to is not None:
+        date_to = models.validate_date(date_to)
+    if tx_type is not None:
+        tx_type = models.validate_type(tx_type)
+
+    stream = _iter_transactions(store)
+    stream = _filter_period(stream, date_from, date_to)
+    stream = _filter_type(stream, tx_type)
+    stream = _filter_category(stream, category)
+    stream = _filter_query(stream, query)
+    stream = _filter_tag(stream, tag)
+
+    if limit is not None:
+        if limit <= 0:
+            raise ValidationError(f'--limit는 양수여야 합니다: {limit}', hint='예: --limit 10')
+        return heapq.nlargest(limit, stream, key=_recency_key)
+    return sorted(stream, key=_recency_key, reverse=True)
+
+
 @timed
 @logged
 def list_transactions(store: st.Storage, limit: int) -> list[models.Transaction]:
@@ -57,8 +146,7 @@ def list_transactions(store: st.Storage, limit: int) -> list[models.Transaction]
     """
     if limit <= 0:
         raise ValidationError(f'--limit는 양수여야 합니다: {limit}', hint='예: --limit 10')
-    stream = (models.Transaction.from_record(r) for r in store.iter_records(st.TRANSACTIONS))
-    return heapq.nlargest(limit, stream, key=lambda tx: (tx.date, tx.id))
+    return heapq.nlargest(limit, _iter_transactions(store), key=_recency_key)
 
 
 def category_registered(store: st.Storage, name: str) -> bool:

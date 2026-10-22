@@ -43,6 +43,19 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser('add', help='거래를 대화형으로 추가')
     list_parser = subparsers.add_parser('list', help='최신순 거래 목록')
     list_parser.add_argument('--limit', type=int, default=10, help='표시 건수 (기본: 10)')
+    search_parser = subparsers.add_parser(
+        'search',
+        help='조건 검색 (조건 여러 개 = AND)',
+        description='조건에 맞는 거래를 최신순으로 출력합니다. '
+                    '조건을 여러 개 주면 모두 만족(AND)하는 거래만 출력됩니다.',
+    )
+    search_parser.add_argument('--from', dest='date_from', metavar='YYYY-MM-DD', help='이 날짜부터')
+    search_parser.add_argument('--to', dest='date_to', metavar='YYYY-MM-DD', help='이 날짜까지')
+    search_parser.add_argument('--type', dest='tx_type', help='income 또는 expense')
+    search_parser.add_argument('--category', help='카테고리 (완전 일치)')
+    search_parser.add_argument('--q', dest='query', help='메모 키워드 (부분 일치, 대소문자 무시)')
+    search_parser.add_argument('--tag', help='태그 (부분 일치, 대소문자 무시)')
+    search_parser.add_argument('--limit', type=int, help='표시 건수 (기본: 전부)')
     return parser
 
 
@@ -137,11 +150,10 @@ def print_init_report(report: services.InitReport) -> None:
         print('[힌트] category add/remove로 언제든 수정할 수 있습니다.')
 
 
-def cmd_list(store: Storage, limit: int) -> None:
-    """list — 날짜 기준 최신순 거래 목록 (결정 3-1/3-2/3-3)."""
-    transactions = services.list_transactions(store, limit)
+def print_transactions(transactions: list, empty_message: str) -> None:
+    """거래 목록을 열 맞춤으로 출력 (결정 3-3) — list와 search가 공유하는 출력기."""
     if not transactions:
-        print('[안내] 거래가 없습니다. add로 첫 거래를 추가해보세요.')
+        print(f'[안내] {empty_message}')
         return
     rows = [
         [tx.id, tx.date, tx.type, tx.category, f'{tx.amount:,}', tx.memo]
@@ -149,6 +161,23 @@ def cmd_list(store: Storage, limit: int) -> None:
     ]
     for line in format_table(rows, right_align={4}):  # 금액 열만 오른쪽 정렬
         print(line)
+
+
+def cmd_list(store: Storage, limit: int) -> None:
+    """list — 날짜 기준 최신순 거래 목록 (결정 3-1/3-2/3-3)."""
+    print_transactions(services.list_transactions(store, limit),
+                       '거래가 없습니다. add로 첫 거래를 추가해보세요.')
+
+
+def cmd_search(store: Storage, args: argparse.Namespace) -> None:
+    """search — 조건 검색, 모든 조건 AND (결정 4-1~4-4)."""
+    results = services.search_transactions(
+        store,
+        date_from=args.date_from, date_to=args.date_to,
+        tx_type=args.tx_type, category=args.category,
+        query=args.query, tag=args.tag, limit=args.limit,
+    )
+    print_transactions(results, '조건에 맞는 거래가 없습니다.')
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -173,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd_add(store)
         elif args.command == 'list':
             cmd_list(store, args.limit)
+        elif args.command == 'search':
+            cmd_search(store, args)
         elif args.command is None:
             parser.print_help()
         return 0
