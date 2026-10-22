@@ -56,6 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument('--q', dest='query', help='메모 키워드 (부분 일치, 대소문자 무시)')
     search_parser.add_argument('--tag', help='태그 (부분 일치, 대소문자 무시)')
     search_parser.add_argument('--limit', type=int, help='표시 건수 (기본: 전부)')
+    summary_parser = subparsers.add_parser('summary', help='월별 요약 (총수입/총지출/잔액 + 지출 TOP)')
+    summary_parser.add_argument('--month', dest='year_month', metavar='YYYY-MM',
+                                required=True, help='요약할 연-월 (예: 2026-10)')
+    summary_parser.add_argument('--top', type=int, default=3,
+                                help='지출 상위 카테고리 수 (기본: 3, 동점은 함께 표시)')
     return parser
 
 
@@ -180,6 +185,25 @@ def cmd_search(store: Storage, args: argparse.Namespace) -> None:
     print_transactions(results, '조건에 맞는 거래가 없습니다.')
 
 
+def cmd_summary(store: Storage, year_month: str, top_n: int) -> None:
+    """summary — 월별 요약 출력 (결정 5-1/5-2). 예산 표시는 섹션 6에서 추가."""
+    summary = services.summarize(store, year_month)
+    ranked = services.top_expense_categories(summary.expense_by_category, top_n)
+    if summary.transaction_count == 0:
+        print(f'[안내] {summary.year_month}에는 데이터가 없습니다.')
+        return
+    print(f'총 수입: {summary.income_total:,}원')
+    print(f'총 지출: {summary.expense_total:,}원')
+    print(f'잔액: {summary.balance:,}원')
+    print()
+    print(f'지출 TOP {top_n}')
+    if not ranked:
+        print('(지출 내역 없음)')
+        return
+    for rank, name, amount in ranked:
+        print(f'{rank}) {name} {amount:,}원')
+
+
 def main(argv: list[str] | None = None) -> int:
     """진입점이자 예외의 단일 관문(결정 1-2).
 
@@ -204,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd_list(store, args.limit)
         elif args.command == 'search':
             cmd_search(store, args)
+        elif args.command == 'summary':
+            cmd_summary(store, args.year_month, args.top)
         elif args.command is None:
             parser.print_help()
         return 0

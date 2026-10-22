@@ -135,6 +135,72 @@ def search_transactions(
     return sorted(stream, key=_recency_key, reverse=True)
 
 
+@dataclass
+class MonthSummary:
+    """한 달(YYYY-MM)의 요약 — 저장되지 않는 일회용 보고서 (축 5 기각의 결과).
+
+    숫자 2개 + 카테고리별 지출 dict가 누적의 전부 (결정 5-1).
+    """
+
+    year_month: str  # 'YYYY-MM' — 연도가 항상 함께 다닌다
+    income_total: int = 0
+    expense_total: int = 0
+    expense_by_category: dict[str, int] = field(default_factory=dict)
+    transaction_count: int = 0
+
+    @property
+    def balance(self) -> int:
+        return self.income_total - self.expense_total
+
+
+@timed
+@logged
+def summarize(store: st.Storage, year_month: str) -> MonthSummary:
+    """월별 요약 — 스트리밍 1-pass 누적 (결정 5-1).
+
+    거름망(_filter_period)을 재사용하되 소비자는 정렬기가 아닌 누적기 —
+    한 건씩 받아 숫자에 더하고 흘려보낸다. 메모리는 카테고리 수에 비례.
+    """
+    year_month = models.validate_year_month(year_month)
+    # ISO 날짜는 문자열 비교 = 시간 비교라 '-31'이 그 달의 모든 유효 날짜를 덮는다
+    stream = _filter_period(_iter_transactions(store), f'{year_month}-01', f'{year_month}-31')
+    summary = MonthSummary(year_month)
+    for tx in stream:
+        summary.transaction_count += 1
+        if tx.type == 'income':
+            summary.income_total += tx.amount
+        else:
+            summary.expense_total += tx.amount
+            summary.expense_by_category[tx.category] = (
+                summary.expense_by_category.get(tx.category, 0) + tx.amount
+            )
+    return summary
+
+
+def top_expense_categories(
+    expense_by_category: dict[str, int], top_n: int,
+) -> list[tuple[int, str, int]]:
+    """지출 합계 상위 — (순위, 카테고리, 합계) 목록 (결정 5-2).
+
+    공동 순위는 스포츠식(1,1,3), 동점 내부는 가나다순, N위까지는 동점 전부
+    포함하므로 줄 수가 N을 넘을 수 있다.
+    """
+    if top_n <= 0:
+        raise ValidationError(f'--top은 양수여야 합니다: {top_n}', hint='예: --top 3')
+    items = sorted(expense_by_category.items(), key=lambda kv: (-kv[1], kv[0]))
+    ranked: list[tuple[int, str, int]] = []
+    rank = 0
+    prev_amount: int | None = None
+    for position, (name, amount) in enumerate(items, start=1):
+        if amount != prev_amount:
+            rank = position  # 스포츠식: 순위 = 자기보다 앞선 인원 수 + 1
+            prev_amount = amount
+        if rank > top_n:
+            break
+        ranked.append((rank, name, amount))
+    return ranked
+
+
 @timed
 @logged
 def list_transactions(store: st.Storage, limit: int) -> list[models.Transaction]:

@@ -36,6 +36,18 @@ def validate_date(value: str) -> str:
     return value
 
 
+def validate_year_month(value: str) -> str:
+    """'연-월'(YYYY-MM) 형식인지 검사하고 그대로 돌려준다 — 단순 월(MM)이 아니다."""
+    try:
+        date.fromisoformat(f'{value}-01')
+    except ValueError:
+        raise ValidationError(
+            f'월 형식이 올바르지 않습니다: {value!r} (YYYY-MM)',
+            hint='예: 2026-10',
+        ) from None
+    return value
+
+
 def validate_type(value: str) -> TransactionType:
     if value not in ('income', 'expense'):
         raise ValidationError(
