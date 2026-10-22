@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from budget_app import models
 from budget_app import storage as st
 from budget_app.decorators import logged, timed
-from budget_app.errors import ValidationError
+from budget_app.errors import NotFoundError, ValidationError
 
 # 결정 0-5 부속: 토스 '내 소비' 대분류를 한 단어로 축약한 기본 카테고리.
 # 계층 없는 1단 평면 구조 — 세분화는 사용자가 category add로 같은 평면에 추가한다.
@@ -308,6 +308,41 @@ def add_category(store: st.Storage, name: str) -> str:
                               hint='category list로 현재 목록을 확인하세요')
     store.append_record(st.CATEGORIES, {'name': name})
     return name
+
+
+def count_category_usage(store: st.Storage, name: str) -> int:
+    """해당 카테고리를 쓰는 거래 건수 — 삭제 시점 전수 스캔 (결정 7-2).
+
+    존재 여부는 첫 발견 즉시 명제가 참으로 확정되어 조기 종료가 가능하지만,
+    건수는 전체를 읽어야 정확하다 — 서로 다른 질문이며 비용도 다르다.
+    건수가 오류 메시지에서 사용자의 다음 행동 판단 재료가 되므로, 드물게
+    실행되는 작업임을 근거로 비용이 더 큰 질문을 채택했다.
+    """
+    return sum(1 for tx in _iter_transactions(store) if tx.category == name)
+
+
+@timed
+@logged
+def remove_category(store: st.Storage, name: str) -> None:
+    """카테고리 삭제 — 사용 중이면 차단 (결정 7-1), 반영은 원자적 교체 (결정 7-3).
+
+    검사 순서가 곧 정책이다: 등록 확인 → 사용 건수 집계 → 사용 중이면 파일을
+    건드리기 전에 차단(읽기 전용 종료) → 미사용일 때만 재작성에 진입한다.
+    재작성 단계에서는 원본을 읽는 스트림과 임시 파일 쓰기가 동시에 진행되지만
+    서로 다른 파일이므로 안전하다.
+    """
+    name = name.strip()
+    if not category_registered(store, name):
+        raise NotFoundError(f'등록되지 않은 카테고리입니다: {name}',
+                            hint='category list로 현재 목록을 확인하세요')
+    usage = count_category_usage(store, name)
+    if usage > 0:
+        raise ValidationError(
+            f"'{name}'은(는) 거래 {usage}건이 사용 중이라 삭제할 수 없습니다",
+            hint='해당 거래의 카테고리를 변경한 뒤 다시 시도하세요',
+        )
+    remaining = (r for r in store.iter_records(st.CATEGORIES) if r.get('name') != name)
+    store.rewrite_records(st.CATEGORIES, remaining)
 
 
 @timed

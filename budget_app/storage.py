@@ -8,8 +8,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
 from budget_app.decorators import translates_oserrors
 from budget_app.errors import StorageError
@@ -70,6 +71,28 @@ class Storage:
         """파일 끝에 레코드 한 줄을 덧붙인다."""
         with open(self.path(filename), 'a', encoding='utf-8') as f:
             f.write(json.dumps(record, ensure_ascii=False) + '\n')
+
+    @translates_oserrors
+    def rewrite_records(self, filename: str, records: Iterable[dict]) -> None:
+        """파일 전체를 새 레코드들로 교체 — 임시 파일 + os.replace (결정 7-3, 8-2 방식).
+
+        원본을 직접 고치지 않는다: 같은 폴더의 임시 파일에 전부 쓴 뒤 이름을
+        바꿔치기한다. DB 트랜잭션과 같은 의도의 축소판으로, os.replace가 커밋
+        지점이다 — 그 전에 중단되면 변경은 무효(원본 그대로, .tmp는 무해한
+        잔여물), 그 후면 완전 반영. 불완전한 내용은 항상 임시 이름 아래에만
+        존재하며, 본명이 가리키는 파일은 어느 순간에도 완전하다.
+        보장 범위는 프로세스 중단까지 — 전원 단절(OS 쓰기 캐시 유실)은 fsync를
+        적용하지 않으므로 범위 밖임을 명시한다.
+        임시 파일은 반드시 목적지와 같은 폴더에 만든다: os.replace의 원자성은
+        동일 파일시스템의 이름 교체에만 성립하며, 파일시스템을 건너면 복사가
+        필요해져 불완전 상태가 본명 아래에 노출될 수 있다.
+        """
+        target = self.path(filename)
+        tmp_path = self.path(filename + '.tmp')
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            for record in records:
+                f.write(json.dumps(record, ensure_ascii=False) + '\n')
+        os.replace(tmp_path, target)
 
     # ----- meta: 거래 id 카운터 -----
 

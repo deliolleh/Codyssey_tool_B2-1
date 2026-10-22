@@ -21,7 +21,7 @@ except ImportError:
 
 from budget_app import models, services
 from budget_app.decorators import setup_logging
-from budget_app.errors import BudgetError
+from budget_app.errors import BudgetError, ValidationError
 from budget_app.storage import DEFAULT_DATA_DIR, Storage
 
 LOG_FILENAME = 'app.log'
@@ -68,6 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
                             required=True, help='예산을 걸 연-월 (예: 2026-10)')
     budget_set.add_argument('--amount', type=int, required=True, help='예산 금액 (양수)')
     budget_sub.add_parser('list', help='설정된 월 예산의 현재 값 목록')
+    category_parser = subparsers.add_parser('category', help='카테고리 추가/목록/삭제')
+    category_sub = category_parser.add_subparsers(dest='category_command', metavar='<add|list|remove>')
+    category_sub.add_parser('add', help='카테고리 등록 (대화형)')
+    category_sub.add_parser('list', help='카테고리 목록')
+    category_sub.add_parser('remove', help='카테고리 삭제 — 사용 중이면 차단 (대화형)')
     return parser
 
 
@@ -236,6 +241,30 @@ def cmd_budget(store: Storage, args: argparse.Namespace, parser: argparse.Argume
         parser.parse_args(['budget', '--help'])  # 하위 명령 없으면 budget 도움말 출력 후 종료
 
 
+def _non_empty(value: str) -> str:
+    if not value:
+        raise ValidationError('값이 비어 있습니다', hint='한 단어 이상 입력해주세요')
+    return value
+
+
+def cmd_category(store: Storage, args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """category add/list/remove — 등록 목록 관리 (결정 7-1/7-2/7-3)."""
+    if args.category_command == 'add':
+        name = ask('카테고리명: ', _non_empty)
+        services.add_category(store, name)
+        print(f'[저장 완료] category={name}')
+    elif args.category_command == 'list':
+        for name in services.list_categories(store):
+            print(f'- {name}')
+    elif args.category_command == 'remove':
+        print('[안내] 등록된 카테고리: ' + ', '.join(services.list_categories(store)))
+        name = ask('삭제할 카테고리명: ', _non_empty)
+        services.remove_category(store, name)
+        print(f'[삭제 완료] category={name}')
+    else:
+        parser.parse_args(['category', '--help'])
+
+
 def main(argv: list[str] | None = None) -> int:
     """진입점이자 예외의 단일 관문(결정 1-2).
 
@@ -264,6 +293,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd_summary(store, args.year_month, args.top)
         elif args.command == 'budget':
             cmd_budget(store, args, parser)
+        elif args.command == 'category':
+            cmd_category(store, args, parser)
         elif args.command is None:
             parser.print_help()
         return 0
