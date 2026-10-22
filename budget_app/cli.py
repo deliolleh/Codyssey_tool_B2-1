@@ -99,7 +99,11 @@ def format_table(rows: list[list[str]], right_align: set[int]) -> list[str]:
 def ask(prompt: str, validator: Callable[[str], object] | None = None) -> str:
     """통과할 때까지 같은 필드를 다시 묻는다 (결정 2-1 A안).
 
-    판정은 모델의 검사기가, 오류 전달과 재질문은 CLI가 — 'abc' 시나리오의 2인극.
+    validator에는 모델의 검증 함수가 값(일급 객체)으로 전달된다 — 판정 기준은
+    모델 소관, 오류 전달과 재질문은 CLI 소관.
+    검증을 통과하기 전에는 return하지 않으므로, 호출한 쪽(cmd_add 등)의 실행은
+    이 줄에서 대기한다 — 유효하지 않은 입력이 services 계층까지 도달할 수 없는 근거.
+    탈출 경로는 세 가지: 유효한 입력(return), Ctrl+C(130), EOF(취소).
     """
     while True:
         raw = input(prompt).strip()

@@ -57,6 +57,17 @@ def _iter_transactions(store: st.Storage):
 
 
 # ----- 검색 거름망 (결정 4-2: 조건 하나 = 거름망 하나, None이면 통과) -----
+#
+# 동작 방식 (섹션 4에서 확립):
+# - 각 필터는 제너레이터 함수다. 체인 조립(stream = _filter_x(stream, ...)의 연쇄 =
+#   함수 합성 f(g(h(x)))의 축차 표기) 시점에는 아무것도 실행·판정되지 않는다.
+# - 소비가 시작되면 레코드가 "한 건씩" 체인 전체를 관통한다(단계별 일괄 처리가 아님).
+#   체인 내에 동시에 존재하는 거래는 최대 1건.
+# - 조건 불만족 시 yield가 실행되지 않으며, 하류로는 아무것도 전달되지 않는다
+#   (빈 값이 전달되는 것이 아님). 해당 필터의 for 루프가 다음 반복으로 진행하며
+#   상류에 다음 레코드를 요청하고, 이 요청이 연쇄되어 파일의 다음 줄이 읽힌다.
+# - 필터의 직렬 연결이 곧 AND 결합이다(결정 4-1): 모든 필터를 통과한 레코드만
+#   소비자에 도달한다.
 
 def _filter_period(stream, date_from: str | None, date_to: str | None):
     for tx in stream:
@@ -182,7 +193,13 @@ def set_budget(store: st.Storage, year_month: str, amount: str | int) -> int:
 
 
 def current_budgets(store: st.Storage) -> dict[str, int]:
-    """월별 현재 예산 — 스트리밍하며 같은 달은 나중 줄이 덮어씀 (last-wins 그 자체)."""
+    """월별 현재 예산 — 스트리밍하며 같은 달은 나중 줄이 덮어씀 (last-wins 그 자체).
+
+    특정 달의 최종값만 필요해도 전수 읽기가 필요하다: 여러 달의 레코드가 섞여
+    있어, 어느 줄이 해당 달의 마지막인지는 끝까지 읽어야 확정된다.
+    읽기는 전체 줄 수에 비례하고 메모리(dict)는 설정된 달의 개수에 비례한다 —
+    재설정 횟수는 읽기량에만 영향을 주고 메모리에는 영향이 없다.
+    """
     budgets: dict[str, int] = {}
     for record in store.iter_records(st.BUDGETS):
         if 'year_month' in record and 'amount' in record:
@@ -200,8 +217,15 @@ def get_budget(store: st.Storage, year_month: str) -> int | None:
 def summarize(store: st.Storage, year_month: str) -> MonthSummary:
     """월별 요약 — 스트리밍 1-pass 누적 (결정 5-1).
 
-    거름망(_filter_period)을 재사용하되 소비자는 정렬기가 아닌 누적기 —
-    한 건씩 받아 숫자에 더하고 흘려보낸다. 메모리는 카테고리 수에 비례.
+    거름망(_filter_period)을 재사용하되 소비자는 누적기다. 본문에 yield가 없는 것은
+    이 함수가 스트림의 중간 단계가 아니라 종단 소비자이기 때문이다 — 합계는 마지막
+    레코드까지 확인해야 확정되므로, 완주 후 완성된 보고서를 return한다.
+    누적은 "더하고 잊는" 방식이라 과거 레코드를 보유할 필요가 없고(top-N의 후보
+    유지와 대비), 메모리는 카테고리 수에 비례한다.
+
+    두 저장소(거래·예산)는 각각 정확히 1회씩, 상호 의존 없이 독립적으로 읽혀
+    MonthSummary 보고서에서 결합된다. 사용률·초과액 등 파생값은 저장하지 않고
+    property로 매번 계산한다 (파생 데이터 저장 기각 — 결정 0-2 축 5 논의).
     """
     year_month = models.validate_year_month(year_month)
     # ISO 날짜는 문자열 비교 = 시간 비교라 '-31'이 그 달의 모든 유효 날짜를 덮는다
@@ -226,6 +250,10 @@ def top_expense_categories(
 
     공동 순위는 스포츠식(1,1,3), 동점 내부는 가나다순, N위까지는 동점 전부
     포함하므로 줄 수가 N을 넘을 수 있다.
+
+    서명이 store가 아닌 dict를 받는 것은 의도된 제약이다: summarize가 1회 독파로
+    만든 집계 결과만 받으므로, 이 함수가 저장소를 재독하는 경로는 구조적으로 없다
+    (한 명령 안에서 같은 파일을 두 번 읽지 않는다).
     """
     if top_n <= 0:
         raise ValidationError(f'--top은 양수여야 합니다: {top_n}', hint='예: --top 3')
@@ -248,8 +276,10 @@ def top_expense_categories(
 def list_transactions(store: st.Storage, limit: int) -> list[models.Transaction]:
     """날짜 기준 최신순 상위 limit건 (결정 3-1/3-2).
 
-    heapq.nlargest는 스트림을 흘려보내며 "지금까지의 상위 limit명 명단"만 유지한다 —
-    전체를 다 읽지만(top-N은 끝까지 봐야 확정) 메모리는 O(limit)로 묶인다.
+    heapq.nlargest는 스트림을 소비하며 상위 limit건의 후보 목록만 유지한다 —
+    읽기는 전체 줄 수(미확인 줄이 남아 있는 한 top-N은 확정 불가),
+    메모리는 O(limit)로 제한된다. 조기 종료 가능 여부는 질문의 성질에 달렸다:
+    존재 여부(any)는 첫 일치에서 확정되지만, top-N·합계는 전수 확인이 필요하다.
     key=(date, id): 날짜 같으면 id가 큰 쪽(나중 입력)이 위.
     """
     if limit <= 0:
