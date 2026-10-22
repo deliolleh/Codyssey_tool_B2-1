@@ -140,6 +140,7 @@ class MonthSummary:
     """한 달(YYYY-MM)의 요약 — 저장되지 않는 일회용 보고서 (축 5 기각의 결과).
 
     숫자 2개 + 카테고리별 지출 dict가 누적의 전부 (결정 5-1).
+    budget_amount는 budgets 저장소에서 가져온 그 달의 현재 예산 (없으면 None).
     """
 
     year_month: str  # 'YYYY-MM' — 연도가 항상 함께 다닌다
@@ -147,10 +148,51 @@ class MonthSummary:
     expense_total: int = 0
     expense_by_category: dict[str, int] = field(default_factory=dict)
     transaction_count: int = 0
+    budget_amount: int | None = None
 
     @property
     def balance(self) -> int:
         return self.income_total - self.expense_total
+
+    @property
+    def budget_usage_percent(self) -> float | None:
+        """예산 대비 사용률(%). 예산이 없으면 None."""
+        if self.budget_amount is None:
+            return None
+        return self.expense_total / self.budget_amount * 100
+
+    @property
+    def budget_exceeded_by(self) -> int:
+        """예산 초과액 (초과 아니면 0)."""
+        if self.budget_amount is None:
+            return 0
+        return max(0, self.expense_total - self.budget_amount)
+
+
+# ----- 예산 (결정 6-1: last-wins append / 6-2: 현재 값 조회) -----
+
+@timed
+@logged
+def set_budget(store: st.Storage, year_month: str, amount: str | int) -> int:
+    """월 예산 설정 — 재설정도 append 한 줄 (last-wins이므로 재작성 불요)."""
+    year_month = models.validate_year_month(year_month)
+    amount = models.validate_amount(amount)
+    store.append_record(st.BUDGETS, {'year_month': year_month, 'amount': amount})
+    return amount
+
+
+def current_budgets(store: st.Storage) -> dict[str, int]:
+    """월별 현재 예산 — 스트리밍하며 같은 달은 나중 줄이 덮어씀 (last-wins 그 자체)."""
+    budgets: dict[str, int] = {}
+    for record in store.iter_records(st.BUDGETS):
+        if 'year_month' in record and 'amount' in record:
+            budgets[record['year_month']] = int(record['amount'])
+    return budgets
+
+
+def get_budget(store: st.Storage, year_month: str) -> int | None:
+    """특정 달의 현재 예산 (설정 안 됐으면 None)."""
+    return current_budgets(store).get(year_month)
 
 
 @timed
@@ -164,7 +206,7 @@ def summarize(store: st.Storage, year_month: str) -> MonthSummary:
     year_month = models.validate_year_month(year_month)
     # ISO 날짜는 문자열 비교 = 시간 비교라 '-31'이 그 달의 모든 유효 날짜를 덮는다
     stream = _filter_period(_iter_transactions(store), f'{year_month}-01', f'{year_month}-31')
-    summary = MonthSummary(year_month)
+    summary = MonthSummary(year_month, budget_amount=get_budget(store, year_month))
     for tx in stream:
         summary.transaction_count += 1
         if tx.type == 'income':

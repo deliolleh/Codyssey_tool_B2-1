@@ -61,6 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
                                 required=True, help='요약할 연-월 (예: 2026-10)')
     summary_parser.add_argument('--top', type=int, default=3,
                                 help='지출 상위 카테고리 수 (기본: 3, 동점은 함께 표시)')
+    budget_parser = subparsers.add_parser('budget', help='월 예산 설정/조회')
+    budget_sub = budget_parser.add_subparsers(dest='budget_command', metavar='<set|list>')
+    budget_set = budget_sub.add_parser('set', help='월 예산 설정 (재설정하면 새 값이 유효)')
+    budget_set.add_argument('--month', dest='year_month', metavar='YYYY-MM',
+                            required=True, help='예산을 걸 연-월 (예: 2026-10)')
+    budget_set.add_argument('--amount', type=int, required=True, help='예산 금액 (양수)')
+    budget_sub.add_parser('list', help='설정된 월 예산의 현재 값 목록')
     return parser
 
 
@@ -195,6 +202,10 @@ def cmd_summary(store: Storage, year_month: str, top_n: int) -> None:
     print(f'총 수입: {summary.income_total:,}원')
     print(f'총 지출: {summary.expense_total:,}원')
     print(f'잔액: {summary.balance:,}원')
+    if summary.budget_amount is not None:
+        print(f'예산: {summary.budget_amount:,}원 (사용률 {summary.budget_usage_percent:.1f}%)')
+        if summary.budget_exceeded_by > 0:
+            print(f'[경고] 예산을 {summary.budget_exceeded_by:,}원 초과했습니다!')
     print()
     print(f'지출 TOP {top_n}')
     if not ranked:
@@ -202,6 +213,23 @@ def cmd_summary(store: Storage, year_month: str, top_n: int) -> None:
         return
     for rank, name, amount in ranked:
         print(f'{rank}) {name} {amount:,}원')
+
+
+def cmd_budget(store: Storage, args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """budget set/list — 예산 설정과 현재 값 조회 (결정 6-1/6-2)."""
+    if args.budget_command == 'set':
+        amount = services.set_budget(store, args.year_month, args.amount)
+        print(f'[저장 완료] {args.year_month} 예산 {amount:,}원')
+    elif args.budget_command == 'list':
+        budgets = services.current_budgets(store)
+        if not budgets:
+            print('[안내] 설정된 예산이 없습니다. budget set으로 설정해보세요.')
+            return
+        rows = [[ym, f'{amount:,}'] for ym, amount in sorted(budgets.items())]
+        for line in format_table(rows, right_align={1}):
+            print(line)
+    else:
+        parser.parse_args(['budget', '--help'])  # 하위 명령 없으면 budget 도움말 출력 후 종료
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -230,6 +258,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd_search(store, args)
         elif args.command == 'summary':
             cmd_summary(store, args.year_month, args.top)
+        elif args.command == 'budget':
+            cmd_budget(store, args, parser)
         elif args.command is None:
             parser.print_help()
         return 0
