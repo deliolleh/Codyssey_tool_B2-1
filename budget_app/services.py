@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import heapq
 from dataclasses import dataclass, field
 
 from budget_app import models
@@ -43,6 +44,21 @@ def initialize(store: st.Storage) -> InitReport:
             store.append_record(st.CATEGORIES, {'name': name})
         report.seeded_categories = list(DEFAULT_CATEGORIES)
     return report
+
+
+@timed
+@logged
+def list_transactions(store: st.Storage, limit: int) -> list[models.Transaction]:
+    """날짜 기준 최신순 상위 limit건 (결정 3-1/3-2).
+
+    heapq.nlargest는 스트림을 흘려보내며 "지금까지의 상위 limit명 명단"만 유지한다 —
+    전체를 다 읽지만(top-N은 끝까지 봐야 확정) 메모리는 O(limit)로 묶인다.
+    key=(date, id): 날짜 같으면 id가 큰 쪽(나중 입력)이 위.
+    """
+    if limit <= 0:
+        raise ValidationError(f'--limit는 양수여야 합니다: {limit}', hint='예: --limit 10')
+    stream = (models.Transaction.from_record(r) for r in store.iter_records(st.TRANSACTIONS))
+    return heapq.nlargest(limit, stream, key=lambda tx: (tx.date, tx.id))
 
 
 def category_registered(store: st.Storage, name: str) -> bool:

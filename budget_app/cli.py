@@ -9,8 +9,15 @@ from __future__ import annotations
 
 import argparse
 import logging
+import unicodedata
 from pathlib import Path
 from typing import Callable
+
+try:
+    # import 자체가 input()의 라인 편집기를 교체한다 — 한글 백스페이스/방향키/히스토리.
+    import readline  # noqa: F401
+except ImportError:
+    pass  # readline이 없는 플랫폼(Windows 기본 등)에선 기본 입력 유지
 
 from budget_app import models, services
 from budget_app.decorators import setup_logging
@@ -34,7 +41,34 @@ def build_parser() -> argparse.ArgumentParser:
     # 명령(add, list, …)은 기능 루프마다 여기에 추가된다.
     subparsers = parser.add_subparsers(dest='command', metavar='<command>')
     subparsers.add_parser('add', help='거래를 대화형으로 추가')
+    list_parser = subparsers.add_parser('list', help='최신순 거래 목록')
+    list_parser.add_argument('--limit', type=int, default=10, help='표시 건수 (기본: 10)')
     return parser
+
+
+def display_width(text: str) -> int:
+    """터미널 표시 폭. 한글 등 동아시아 전각 문자는 2칸을 차지한다."""
+    return sum(2 if unicodedata.east_asian_width(ch) in 'WF' else 1 for ch in text)
+
+
+def pad(text: str, width: int) -> str:
+    """len()이 아니라 표시 폭 기준으로 왼쪽 정렬 — 한글 열이 어긋나지 않게."""
+    return text + ' ' * (width - display_width(text))
+
+
+def format_table(rows: list[list[str]], right_align: set[int]) -> list[str]:
+    """열 맞춤 포맷터 (결정 3-3, 보너스 3). 외부 라이브러리 없이 문자열 정렬."""
+    widths = [max(display_width(row[col]) for row in rows) for col in range(len(rows[0]))]
+    lines = []
+    for row in rows:
+        cells = []
+        for col, (cell, width) in enumerate(zip(row, widths)):
+            if col in right_align:
+                cells.append(' ' * (width - display_width(cell)) + cell)
+            else:
+                cells.append(pad(cell, width))
+        lines.append(' | '.join(cells).rstrip())
+    return lines
 
 
 def ask(prompt: str, validator: Callable[[str], object] | None = None) -> str:
@@ -57,12 +91,15 @@ def ask(prompt: str, validator: Callable[[str], object] | None = None) -> str:
 
 
 def ask_category(store: Storage) -> str:
-    """등록된 카테고리를 받을 때까지 묻는다. 미등록이면 등록 유도 + 확인 (결정 2-3)."""
+    """등록된 카테고리를 받을 때까지 묻는다. 미등록이면 등록 유도 + 확인 (결정 2-3).
+
+    묻기 전에 등록 목록을 보여준다 — 사용자가 뭘 칠 수 있는지 모른 채 묻지 않기.
+    """
+    print('[안내] 등록된 카테고리: ' + ', '.join(services.list_categories(store)))
     while True:
         name = input('카테고리: ').strip()
         if not name:
             print('[오류] 카테고리를 입력해주세요')
-            print('[힌트] 사용 가능: ' + ', '.join(services.list_categories(store)))
             continue
         if services.category_registered(store, name):
             return name
@@ -100,6 +137,20 @@ def print_init_report(report: services.InitReport) -> None:
         print('[힌트] category add/remove로 언제든 수정할 수 있습니다.')
 
 
+def cmd_list(store: Storage, limit: int) -> None:
+    """list — 날짜 기준 최신순 거래 목록 (결정 3-1/3-2/3-3)."""
+    transactions = services.list_transactions(store, limit)
+    if not transactions:
+        print('[안내] 거래가 없습니다. add로 첫 거래를 추가해보세요.')
+        return
+    rows = [
+        [tx.id, tx.date, tx.type, tx.category, f'{tx.amount:,}', tx.memo]
+        for tx in transactions
+    ]
+    for line in format_table(rows, right_align={4}):  # 금액 열만 오른쪽 정렬
+        print(line)
+
+
 def main(argv: list[str] | None = None) -> int:
     """진입점이자 예외의 단일 관문(결정 1-2).
 
@@ -120,6 +171,8 @@ def main(argv: list[str] | None = None) -> int:
         print_init_report(services.initialize(store))
         if args.command == 'add':
             cmd_add(store)
+        elif args.command == 'list':
+            cmd_list(store, args.limit)
         elif args.command is None:
             parser.print_help()
         return 0
