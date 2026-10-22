@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from budget_app import storage as st
+from budget_app.decorators import logged, timed
 
 # 결정 0-5 부속: 토스 '내 소비' 대분류를 한 단어로 축약한 기본 카테고리.
 # 계층 없는 1단 평면 구조 — 세분화는 사용자가 category add로 같은 평면에 추가한다.
@@ -29,6 +30,8 @@ class InitReport:
     seeded_categories: list[str] = field(default_factory=list)
 
 
+@timed   # 바깥: 일지 기록 시간까지 포함해 잰다 (중첩 순서 = 결정 1-1 워크스루 참고)
+@logged  # 안쪽: 시작/완료/실패 기록
 def initialize(store: st.Storage) -> InitReport:
     """저장 파일이 없으면 만들고, 카테고리가 비어 있으면 기본 목록을 심는다."""
     report = InitReport(created_files=store.ensure_files())
