@@ -10,8 +10,9 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
+from typing import Callable
 
-from budget_app import services
+from budget_app import models, services
 from budget_app.decorators import setup_logging
 from budget_app.errors import BudgetError
 from budget_app.storage import DEFAULT_DATA_DIR, Storage
@@ -31,8 +32,62 @@ def build_parser() -> argparse.ArgumentParser:
         help=f'저장 폴더 (기본: ./{DEFAULT_DATA_DIR})',
     )
     # 명령(add, list, …)은 기능 루프마다 여기에 추가된다.
-    parser.add_subparsers(dest='command', metavar='<command>')
+    subparsers = parser.add_subparsers(dest='command', metavar='<command>')
+    subparsers.add_parser('add', help='거래를 대화형으로 추가')
     return parser
+
+
+def ask(prompt: str, validator: Callable[[str], object] | None = None) -> str:
+    """통과할 때까지 같은 필드를 다시 묻는다 (결정 2-1 A안).
+
+    판정은 모델의 검사기가, 오류 전달과 재질문은 CLI가 — 'abc' 시나리오의 2인극.
+    """
+    while True:
+        raw = input(prompt).strip()
+        if validator is None:
+            return raw
+        try:
+            validator(raw)
+        except BudgetError as err:
+            print(f'[오류] {err.cause}')
+            if err.hint:
+                print(f'[힌트] {err.hint}')
+            continue
+        return raw
+
+
+def ask_category(store: Storage) -> str:
+    """등록된 카테고리를 받을 때까지 묻는다. 미등록이면 등록 유도 + 확인 (결정 2-3)."""
+    while True:
+        name = input('카테고리: ').strip()
+        if not name:
+            print('[오류] 카테고리를 입력해주세요')
+            print('[힌트] 사용 가능: ' + ', '.join(services.list_categories(store)))
+            continue
+        if services.category_registered(store, name):
+            return name
+        print(f'[안내] 등록되지 않은 카테고리입니다: {name}')
+        answer = input(f"'{name}'을(를) 새 카테고리로 등록할까요? (y/n): ").strip().lower()
+        if answer == 'y':
+            services.add_category(store, name)
+            print(f'[저장 완료] category={name}')
+            return name
+        # n(및 그 외 입력)이면 재입력으로
+
+
+def cmd_add(store: Storage) -> None:
+    """add — 대화형 거래 추가. 필드 순서는 명세 예시를 따른다."""
+    date = ask('날짜(YYYY-MM-DD): ', models.validate_date)
+    tx_type = ask('타입(income/expense): ', models.validate_type)
+    category = ask_category(store)
+    amount = ask('금액(양수): ', models.validate_amount)
+    memo = input('메모(선택): ').strip()
+    tags = models.parse_tags(input('태그(쉼표로 구분, 없으면 엔터): '))
+    tx = services.add_transaction(
+        store, date=date, tx_type=tx_type, category=category,
+        amount=amount, memo=memo, tags=tags,
+    )
+    print(f'[저장 완료] id={tx.id}')
 
 
 def print_init_report(report: services.InitReport) -> None:
@@ -63,7 +118,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         store = Storage(args.data_dir)
         print_init_report(services.initialize(store))
-        if args.command is None:
+        if args.command == 'add':
+            cmd_add(store)
+        elif args.command is None:
             parser.print_help()
         return 0
     except BudgetError as err:

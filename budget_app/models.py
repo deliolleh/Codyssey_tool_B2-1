@@ -61,6 +61,15 @@ def validate_amount(value: str | int) -> int:
     return amount
 
 
+def parse_tags(raw: str) -> list[str]:
+    """쉼표 구분 태그 입력을 다듬는다 (결정 2-2: trim · 빈 조각 제거 · 중복 제거).
+
+    dict.fromkeys로 중복을 걸러 입력 순서를 보존한다 (set은 순서를 섞는다).
+    """
+    parts = (part.strip() for part in raw.split(','))
+    return list(dict.fromkeys(part for part in parts if part))
+
+
 @dataclass
 class Transaction:
     """거래 한 건. 필드 구성은 명세의 최소 필드를 따른다."""
