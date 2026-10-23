@@ -74,7 +74,7 @@ def validate_amount(value: str | int) -> int:
 
 
 def parse_tags(raw: str) -> list[str]:
-    """쉼표 구분 태그 입력을 다듬는다 (결정 2-2: trim · 빈 조각 제거 · 중복 제거).
+    """쉼표 구분 태그 입력을 다듬는다: trim · 빈 조각 제거 · 중복 제거.
 
     dict.fromkeys로 중복을 걸러 입력 순서를 보존한다 (set은 순서를 섞는다).
     """

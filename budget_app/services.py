@@ -16,7 +16,7 @@ from budget_app import storage as st
 from budget_app.decorators import logged, timed
 from budget_app.errors import NotFoundError, ValidationError
 
-# 결정 0-5 부속: 토스 '내 소비' 대분류를 한 단어로 축약한 기본 카테고리.
+# 기본 카테고리: 토스 '내 소비' 대분류를 한 단어로 축약한 기본 카테고리.
 # 계층 없는 1단 평면 구조 — 세분화는 사용자가 category add로 같은 평면에 추가한다.
 DEFAULT_CATEGORIES = (
     '식비', '카페', '유흥', '쇼핑', '교통', '주거', '통신', '의료', '여가', '생활',  # 지출
@@ -33,7 +33,7 @@ class InitReport:
     seeded_categories: list[str] = field(default_factory=list)
 
 
-@timed   # 바깥: 일지 기록 시간까지 포함해 잰다 (중첩 순서 = 결정 1-1 워크스루 참고)
+@timed   # 바깥: 일지 기록 시간까지 포함해 잰다 (중첩 순서가 의미를 가진다)
 @logged  # 안쪽: 시작/완료/실패 기록
 def initialize(store: st.Storage) -> InitReport:
     """저장 파일이 없으면 만들고, 카테고리가 비어 있으면 기본 목록을 심는다."""
@@ -47,7 +47,7 @@ def initialize(store: st.Storage) -> InitReport:
 
 
 def _recency_key(tx: models.Transaction) -> tuple[str, str]:
-    """최신순 정렬 키 (결정 3-2): 날짜 우선, 같으면 id(생성 순) — 둘 다 고정폭 문자열이라 비교 가능."""
+    """최신순 정렬 키: 날짜 우선, 같으면 id(생성 순) — 둘 다 고정폭 문자열이라 비교 가능."""
     return (tx.date, tx.id)
 
 
@@ -56,9 +56,9 @@ def _iter_transactions(store: st.Storage):
     return (models.Transaction.from_record(r) for r in store.iter_records(st.TRANSACTIONS))
 
 
-# ----- 검색 거름망 (결정 4-2: 조건 하나 = 거름망 하나, None이면 통과) -----
+# ----- 검색 거름망 (조건 하나 = 거름망 하나, None이면 통과) -----
 #
-# 동작 방식 (섹션 4에서 확립):
+# 동작 방식:
 # - 각 필터는 제너레이터 함수다. 체인 조립(stream = _filter_x(stream, ...)의 연쇄 =
 #   함수 합성 f(g(h(x)))의 축차 표기) 시점에는 아무것도 실행·판정되지 않는다.
 # - 소비가 시작되면 레코드가 "한 건씩" 체인 전체를 관통한다(단계별 일괄 처리가 아님).
@@ -66,7 +66,7 @@ def _iter_transactions(store: st.Storage):
 # - 조건 불만족 시 yield가 실행되지 않으며, 하류로는 아무것도 전달되지 않는다
 #   (빈 값이 전달되는 것이 아님). 해당 필터의 for 루프가 다음 반복으로 진행하며
 #   상류에 다음 레코드를 요청하고, 이 요청이 연쇄되어 파일의 다음 줄이 읽힌다.
-# - 필터의 직렬 연결이 곧 AND 결합이다(결정 4-1): 모든 필터를 통과한 레코드만
+# - 필터의 직렬 연결이 곧 AND 결합이다: 모든 필터를 통과한 레코드만
 #   소비자에 도달한다.
 
 def _filter_period(stream, date_from: str | None, date_to: str | None):
@@ -91,7 +91,7 @@ def _filter_category(stream, category: str | None):
 
 
 def _filter_query(stream, query: str | None):
-    """메모 글자 부분일치, 대소문자 무시 (결정 4-3)."""
+    """메모 글자 부분일치, 대소문자 무시."""
     needle = query.casefold() if query is not None else None
     for tx in stream:
         if needle is None or needle in tx.memo.casefold():
@@ -99,7 +99,7 @@ def _filter_query(stream, query: str | None):
 
 
 def _filter_tag(stream, tag: str | None):
-    """태그도 부분일치 + 대소문자 무시 (결정 4-3: 메모와 같은 철학으로 통일)."""
+    """태그도 부분일치 + 대소문자 무시 (메모와 같은 철학으로 통일)."""
     needle = tag.casefold() if tag is not None else None
     for tx in stream:
         if needle is None or any(needle in t.casefold() for t in tx.tags):
@@ -119,11 +119,11 @@ def search_transactions(
     tag: str | None = None,
     limit: int | None = None,
 ) -> list[models.Transaction]:
-    """조건 검색 (모든 조건 AND, 결정 4-1). 결과는 최신순.
+    """조건 검색 (모든 조건 AND). 결과는 최신순.
 
     거름망 5장을 쌓은 파이프라인 — 각 거래는 한 건씩 흘러가며 거름망마다
     "그 줄만 보면 확정되는" 판정을 받는다. limit 없으면 매칭 전부(메모리 O(결과 수)),
-    있으면 선발 명단(O(limit)) (결정 4-4).
+    있으면 선발 명단(O(limit)).
     """
     if date_from is not None:
         date_from = models.validate_date(date_from)
@@ -150,7 +150,7 @@ def search_transactions(
 class MonthSummary:
     """한 달(YYYY-MM)의 요약 — 저장되지 않는 일회용 보고서 (축 5 기각의 결과).
 
-    숫자 2개 + 카테고리별 지출 dict가 누적의 전부 (결정 5-1).
+    숫자 2개 + 카테고리별 지출 dict가 누적의 전부.
     budget_amount는 budgets 저장소에서 가져온 그 달의 현재 예산 (없으면 None).
     """
 
@@ -180,7 +180,7 @@ class MonthSummary:
         return max(0, self.expense_total - self.budget_amount)
 
 
-# ----- 예산 (결정 6-1: last-wins append / 6-2: 현재 값 조회) -----
+# ----- 예산 (last-wins append / 현재 값 조회) -----
 
 @timed
 @logged
@@ -215,7 +215,7 @@ def get_budget(store: st.Storage, year_month: str) -> int | None:
 @timed
 @logged
 def summarize(store: st.Storage, year_month: str) -> MonthSummary:
-    """월별 요약 — 스트리밍 1-pass 누적 (결정 5-1).
+    """월별 요약 — 스트리밍 1-pass 누적.
 
     거름망(_filter_period)을 재사용하되 소비자는 누적기다. 본문에 yield가 없는 것은
     이 함수가 스트림의 중간 단계가 아니라 종단 소비자이기 때문이다 — 합계는 마지막
@@ -225,7 +225,7 @@ def summarize(store: st.Storage, year_month: str) -> MonthSummary:
 
     두 저장소(거래·예산)는 각각 정확히 1회씩, 상호 의존 없이 독립적으로 읽혀
     MonthSummary 보고서에서 결합된다. 사용률·초과액 등 파생값은 저장하지 않고
-    property로 매번 계산한다 (파생 데이터 저장 기각 — 결정 0-2 축 5 논의).
+    property로 매번 계산한다 (파생값은 저장하지 않는다).
     """
     year_month = models.validate_year_month(year_month)
     # ISO 날짜는 문자열 비교 = 시간 비교라 '-31'이 그 달의 모든 유효 날짜를 덮는다
@@ -246,7 +246,7 @@ def summarize(store: st.Storage, year_month: str) -> MonthSummary:
 def top_expense_categories(
     expense_by_category: dict[str, int], top_n: int,
 ) -> list[tuple[int, str, int]]:
-    """지출 합계 상위 — (순위, 카테고리, 합계) 목록 (결정 5-2).
+    """지출 합계 상위 — (순위, 카테고리, 합계) 목록.
 
     공동 순위는 스포츠식(1,1,3), 동점 내부는 가나다순, N위까지는 동점 전부
     포함하므로 줄 수가 N을 넘을 수 있다.
@@ -274,7 +274,7 @@ def top_expense_categories(
 @timed
 @logged
 def list_transactions(store: st.Storage, limit: int) -> list[models.Transaction]:
-    """날짜 기준 최신순 상위 limit건 (결정 3-1/3-2).
+    """날짜 기준 최신순 상위 limit건.
 
     heapq.nlargest는 스트림을 소비하며 상위 limit건의 후보 목록만 유지한다 —
     읽기는 전체 줄 수(미확인 줄이 남아 있는 한 top-N은 확정 불가),
@@ -299,7 +299,7 @@ def list_categories(store: st.Storage) -> list[str]:
 @timed
 @logged
 def add_category(store: st.Storage, name: str) -> str:
-    """카테고리를 등록한다. add의 등록 유도(결정 2-3)와 category add가 같이 쓰는 입구."""
+    """카테고리를 등록한다. add의 등록 유도와 category add가 같이 쓰는 입구."""
     name = name.strip()
     if not name:
         raise ValidationError('카테고리 이름이 비어 있습니다', hint='한 단어 이름을 입력하세요 (예: 식비)')
@@ -311,7 +311,7 @@ def add_category(store: st.Storage, name: str) -> str:
 
 
 def count_category_usage(store: st.Storage, name: str) -> int:
-    """해당 카테고리를 쓰는 거래 건수 — 삭제 시점 전수 스캔 (결정 7-2).
+    """해당 카테고리를 쓰는 거래 건수 — 삭제 시점 전수 스캔.
 
     존재 여부는 첫 발견 즉시 명제가 참으로 확정되어 조기 종료가 가능하지만,
     건수는 전체를 읽어야 정확하다 — 서로 다른 질문이며 비용도 다르다.
@@ -324,7 +324,7 @@ def count_category_usage(store: st.Storage, name: str) -> int:
 @timed
 @logged
 def remove_category(store: st.Storage, name: str) -> None:
-    """카테고리 삭제 — 사용 중이면 차단 (결정 7-1), 반영은 원자적 교체 (결정 7-3).
+    """카테고리 삭제 — 사용 중이면 차단하고, 반영은 원자적 교체로 한다.
 
     검사 순서가 곧 정책이다: 등록 확인 → 사용 건수 집계 → 사용 중이면 파일을
     건드리기 전에 차단(읽기 전용 종료) → 미사용일 때만 재작성에 진입한다.
@@ -360,7 +360,7 @@ def add_transaction(
     """거래 추가의 단일 입구 — 대화형 add든 CSV import든 전부 여기를 지난다.
 
     검증은 모델의 검사기를 빌려 다시 거친다(CLI가 이미 검증했어도).
-    저장 순서(결정 0-4): 카운터 선점 → 거래 append — 중간에 죽어도 번호 구멍만 남는다.
+    저장 순서: 카운터 선점 → 거래 append — 중간에 죽어도 번호 구멍만 남는다.
     """
     # 1) 전부 검증 — 하나라도 실패하면 카운터를 건드리기 전에 중단 (번호 낭비 없음)
     valid_type = models.validate_type(tx_type)
@@ -369,7 +369,7 @@ def add_transaction(
     if not category_registered(store, category):
         raise ValidationError(f'등록되지 않은 카테고리입니다: {category}',
                               hint='category add로 먼저 등록하세요')
-    # 2) 카운터 선점 → 3) append (결정 0-4: 이 사이에 죽으면 중복 대신 무해한 구멍)
+    # 2) 카운터 선점 → 3) append (이 사이에 죽으면 중복 대신 무해한 구멍)
     tx = models.Transaction(
         id=models.format_tx_id(store.claim_tx_number()),
         type=valid_type,

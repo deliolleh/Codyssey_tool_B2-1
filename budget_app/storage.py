@@ -74,7 +74,7 @@ class Storage:
 
     @translates_oserrors
     def rewrite_records(self, filename: str, records: Iterable[dict]) -> None:
-        """파일 전체를 새 레코드들로 교체 — 임시 파일 + os.replace (결정 7-3, 8-2 방식).
+        """파일 전체를 새 레코드들로 교체 — 임시 파일 + os.replace.
 
         원본을 직접 고치지 않는다: 같은 폴더의 임시 파일에 전부 쓴 뒤 이름을
         바꿔치기한다. DB 트랜잭션과 같은 의도의 축소판으로, os.replace가 커밋
@@ -107,7 +107,7 @@ class Storage:
     def claim_tx_number(self) -> int:
         """다음 거래 번호를 선점한다.
 
-        규칙(결정 0-4): 카운터를 먼저 갱신하고 거래는 그 뒤에 저장한다.
+        규칙: 카운터를 먼저 갱신하고 거래는 그 뒤에 저장한다.
         중간에 중단돼도 중복 id 대신 무해한 번호 구멍만 남는다.
         카운터는 삭제와 무관하게 단조 증가하며, 번호는 재사용되지 않는다.
         """
@@ -117,6 +117,6 @@ class Storage:
 
     @translates_oserrors
     def _write_meta(self, last_tx_no: int) -> None:
-        # 한 줄짜리 파일 전체 덮어쓰기. 원자적 교체로의 강화는 결정 8-2에서 다룬다.
+        # 한 줄짜리 파일 전체 덮어쓰기. 원자적 교체로의 강화 여지가 있다.
         with open(self.path(META), 'w', encoding='utf-8') as f:
             f.write(json.dumps({'last_tx_no': last_tx_no}, ensure_ascii=False) + '\n')

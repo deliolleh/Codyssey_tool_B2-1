@@ -1,8 +1,8 @@
 """공통 관심사 데코레이터 — 실행 일지(@logged) · 시간 측정(@timed) · 예외 번역(@translates_oserrors).
 
 말단 모듈: budget_app 안에서는 errors만 import한다(순환 방지).
-공통 규칙(결정 1-1): 데코레이터는 기록만 하고 예외를 삼키지 않는다 —
-최종 변환·출력은 단일 관문(cli.main) 한 곳에서 한다(결정 1-2).
+공통 규칙: 데코레이터는 기록만 하고 예외를 삼키지 않는다 —
+최종 변환·출력은 단일 관문(cli.main) 한 곳에서 한다.
 
 동작 시점:
 - `@decorator` 구문은 실행문이다. 모듈이 import되어 상단부터 실행될 때
@@ -77,7 +77,7 @@ def timed(func: Callable) -> Callable:
 def translates_oserrors(func: Callable) -> Callable:
     """OSError 계열을 StorageError(원인+힌트)로 번역한다. storage 계층 전용.
 
-    완화책(결정 1-1): OSError만 잡는다(버그 은폐 금지), `from exc`로 원인 사슬 보존.
+    완화책: OSError만 잡는다(버그 은폐 금지), `from exc`로 원인 사슬 보존.
     제너레이터 함수는 몸체가 첫 next()에야 실행되므로(lazy), 같은 try로 감싸려면
     wrapper 자신도 제너레이터여야 한다 — 두 형태를 구분해 감싼다.
     """

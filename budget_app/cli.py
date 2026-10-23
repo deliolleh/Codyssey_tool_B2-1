@@ -87,7 +87,7 @@ def pad(text: str, width: int) -> str:
 
 
 def format_table(rows: list[list[str]], right_align: set[int]) -> list[str]:
-    """열 맞춤 포맷터 (결정 3-3, 보너스 3). 외부 라이브러리 없이 문자열 정렬."""
+    """열 맞춤 포맷터. 외부 라이브러리 없이 문자열 정렬."""
     widths = [max(display_width(row[col]) for row in rows) for col in range(len(rows[0]))]
     lines = []
     for row in rows:
@@ -102,7 +102,7 @@ def format_table(rows: list[list[str]], right_align: set[int]) -> list[str]:
 
 
 def ask(prompt: str, validator: Callable[[str], object] | None = None) -> str:
-    """통과할 때까지 같은 필드를 다시 묻는다 (결정 2-1 A안).
+    """통과할 때까지 같은 필드를 다시 묻는다.
 
     validator에는 모델의 검증 함수가 값(일급 객체)으로 전달된다 — 판정 기준은
     모델 소관, 오류 전달과 재질문은 CLI 소관.
@@ -125,7 +125,7 @@ def ask(prompt: str, validator: Callable[[str], object] | None = None) -> str:
 
 
 def ask_category(store: Storage) -> str:
-    """등록된 카테고리를 받을 때까지 묻는다. 미등록이면 등록 유도 + 확인 (결정 2-3).
+    """등록된 카테고리를 받을 때까지 묻는다. 미등록이면 등록 유도 + 확인.
 
     묻기 전에 등록 목록을 보여준다 — 사용자가 뭘 칠 수 있는지 모른 채 묻지 않기.
     """
@@ -172,7 +172,7 @@ def print_init_report(report: services.InitReport) -> None:
 
 
 def print_transactions(transactions: list, empty_message: str) -> None:
-    """거래 목록을 열 맞춤으로 출력 (결정 3-3) — list와 search가 공유하는 출력기."""
+    """거래 목록을 열 맞춤으로 출력 — list와 search가 공유하는 출력기."""
     if not transactions:
         print(f'[안내] {empty_message}')
         return
@@ -185,13 +185,13 @@ def print_transactions(transactions: list, empty_message: str) -> None:
 
 
 def cmd_list(store: Storage, limit: int) -> None:
-    """list — 날짜 기준 최신순 거래 목록 (결정 3-1/3-2/3-3)."""
+    """list — 날짜 기준 최신순 거래 목록."""
     print_transactions(services.list_transactions(store, limit),
                        '거래가 없습니다. add로 첫 거래를 추가해보세요.')
 
 
 def cmd_search(store: Storage, args: argparse.Namespace) -> None:
-    """search — 조건 검색, 모든 조건 AND (결정 4-1~4-4)."""
+    """search — 조건 검색, 모든 조건 AND."""
     results = services.search_transactions(
         store,
         date_from=args.date_from, date_to=args.date_to,
@@ -202,7 +202,7 @@ def cmd_search(store: Storage, args: argparse.Namespace) -> None:
 
 
 def cmd_summary(store: Storage, year_month: str, top_n: int) -> None:
-    """summary — 월별 요약 출력 (결정 5-1/5-2). 예산 표시는 섹션 6에서 추가."""
+    """summary — 월별 요약 출력."""
     summary = services.summarize(store, year_month)
     ranked = services.top_expense_categories(summary.expense_by_category, top_n)
     if summary.transaction_count == 0:
@@ -225,7 +225,7 @@ def cmd_summary(store: Storage, year_month: str, top_n: int) -> None:
 
 
 def cmd_budget(store: Storage, args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    """budget set/list — 예산 설정과 현재 값 조회 (결정 6-1/6-2)."""
+    """budget set/list — 예산 설정과 현재 값 조회."""
     if args.budget_command == 'set':
         amount = services.set_budget(store, args.year_month, args.amount)
         print(f'[저장 완료] {args.year_month} 예산 {amount:,}원')
@@ -248,7 +248,7 @@ def _non_empty(value: str) -> str:
 
 
 def cmd_category(store: Storage, args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    """category add/list/remove — 등록 목록 관리 (결정 7-1/7-2/7-3)."""
+    """category add/list/remove — 등록 목록 관리."""
     if args.category_command == 'add':
         name = ask('카테고리명: ', _non_empty)
         services.add_category(store, name)
@@ -266,10 +266,10 @@ def cmd_category(store: Storage, args: argparse.Namespace, parser: argparse.Argu
 
 
 def main(argv: list[str] | None = None) -> int:
-    """진입점이자 예외의 단일 관문(결정 1-2).
+    """진입점이자 예외의 단일 관문.
 
     예외가 사용자 문장으로 변하는 곳은 여기뿐이다.
-    정상 0 / 오류 1 / 입력 취소 130(결정 1-3)을 돌려준다.
+    정상 0 / 오류 1 / 입력 취소 130을 돌려준다.
     """
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -308,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
         print('[안내] 입력을 취소했습니다. 저장된 것은 없습니다.')
         return 130
     except Exception:
-        # 버그도 화면에는 원인+힌트 형식으로, 전문(스택트레이스)은 일지에만 (결정 1-2 안전망)
+        # 버그도 화면에는 원인+힌트 형식으로, 전문(스택트레이스)은 일지에만
         logging.getLogger('budget_app').exception('예상치 못한 오류')
         print('[오류] 예상치 못한 문제가 발생했습니다')
         print(f'[힌트] {log_path}에 상세 기록을 남겼습니다')
