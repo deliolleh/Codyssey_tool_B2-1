@@ -86,12 +86,19 @@ class Storage:
         임시 파일은 반드시 목적지와 같은 폴더에 만든다: os.replace의 원자성은
         동일 파일시스템의 이름 교체에만 성립하며, 파일시스템을 건너면 복사가
         필요해져 불완전 상태가 본명 아래에 노출될 수 있다.
+        레코드 공급자(제너레이터)가 도중에 예외를 던지면 교체는 일어나지 않고
+        임시 파일은 정리된다 — "커밋하지 않기"가 롤백이므로, 공급자는 쓰기 도중
+        조건 불충족을 발견하면 예외로 전체를 없던 일로 만들 수 있다 (조건부 커밋).
         """
         target = self.path(filename)
         tmp_path = self.path(filename + '.tmp')
-        with open(tmp_path, 'w', encoding='utf-8') as f:
-            for record in records:
-                f.write(json.dumps(record, ensure_ascii=False) + '\n')
+        try:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                for record in records:
+                    f.write(json.dumps(record, ensure_ascii=False) + '\n')
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
         os.replace(tmp_path, target)
 
     # ----- meta: 거래 id 카운터 -----

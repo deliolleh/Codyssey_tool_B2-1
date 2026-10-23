@@ -310,6 +310,89 @@ def add_category(store: st.Storage, name: str) -> str:
     return name
 
 
+def _rewrite_transaction(store: st.Storage, tx_id: str, transform) -> models.Transaction:
+    """대상 거래 하나를 변환(또는 제거)하며 거래 파일을 1-pass 재작성한다.
+
+    처음부터 임시 파일에 복사하며 스캔하고, 대상 id를 끝까지 만나지 못하면
+    제너레이터가 NotFoundError를 던져 교체를 무산시킨다(조건부 커밋 — 원본 무변화).
+    transform(tx)가 None을 돌려주면 그 거래는 새 파일에서 제외(삭제)된다.
+
+    수정 전략으로 last-wins append가 아닌 전체 재작성을 쓰는 이유: 거래 파일은
+    읽기가 주업이라(list/search/summary 전 경로) "파일의 줄 = 살아있는 거래"라는
+    단순한 읽기 의미가 더 값지다. 예산 파일(읽는 곳이 한 군데)과 반대의 선택.
+    """
+    matched: list[models.Transaction] = []  # 제너레이터 안에서 바깥으로 전달할 그릇
+
+    def records():
+        for record in store.iter_records(st.TRANSACTIONS):
+            tx = models.Transaction.from_record(record)
+            if tx.id != tx_id:
+                yield record
+                continue
+            replacement = transform(tx)
+            matched.append(replacement if replacement is not None else tx)
+            if replacement is not None:
+                yield replacement.to_record()
+        if not matched:
+            raise NotFoundError(f'존재하지 않는 거래 id입니다: {tx_id}',
+                                hint='list 또는 search로 id를 확인하세요')
+
+    store.rewrite_records(st.TRANSACTIONS, records())
+    return matched[0]
+
+
+@timed
+@logged
+def delete_transaction(store: st.Storage, tx_id: str) -> models.Transaction:
+    """거래 삭제 — 삭제된 거래를 돌려준다 (사용자 확인 메시지용)."""
+    return _rewrite_transaction(store, tx_id, lambda tx: None)
+
+
+@timed
+@logged
+def update_transaction(
+    store: st.Storage,
+    tx_id: str,
+    *,
+    date: str | None = None,
+    tx_type: str | None = None,
+    category: str | None = None,
+    amount: int | None = None,
+    memo: str | None = None,
+    tags: list[str] | None = None,
+) -> models.Transaction:
+    """거래 수정 — 옵션 기반: None은 유지, 값이 오면 교체 (빈 문자열 = 비우기).
+
+    새 값들의 검증은 재작성을 시작하기 전에 끝낸다 — 검증 실패로
+    파일 작업이 시작되는 일이 없게.
+    """
+    if all(v is None for v in (date, tx_type, category, amount, memo, tags)):
+        raise ValidationError('수정할 필드를 하나 이상 지정해야 합니다',
+                              hint='예: update --id TX-000001 --amount 20000')
+    if date is not None:
+        date = models.validate_date(date)
+    if tx_type is not None:
+        tx_type = models.validate_type(tx_type)
+    if amount is not None:
+        amount = models.validate_amount(amount)
+    if category is not None and not category_registered(store, category):
+        raise ValidationError(f'등록되지 않은 카테고리입니다: {category}',
+                              hint='category add로 먼저 등록하세요')
+
+    def apply(tx: models.Transaction) -> models.Transaction:
+        return models.Transaction(
+            id=tx.id,
+            type=tx_type if tx_type is not None else tx.type,
+            date=date if date is not None else tx.date,
+            amount=amount if amount is not None else tx.amount,
+            category=category if category is not None else tx.category,
+            memo=memo if memo is not None else tx.memo,
+            tags=tags if tags is not None else tx.tags,
+        )
+
+    return _rewrite_transaction(store, tx_id, apply)
+
+
 def count_category_usage(store: st.Storage, name: str) -> int:
     """해당 카테고리를 쓰는 거래 건수 — 삭제 시점 전수 스캔.
 

@@ -73,6 +73,23 @@ def build_parser() -> argparse.ArgumentParser:
     category_sub.add_parser('add', help='카테고리 등록 (대화형)')
     category_sub.add_parser('list', help='카테고리 목록')
     category_sub.add_parser('remove', help='카테고리 삭제 — 사용 중이면 차단 (대화형)')
+    delete_parser = subparsers.add_parser('delete', help='거래 삭제')
+    delete_parser.add_argument('--id', dest='tx_id', required=True, metavar='TX-nnnnnn',
+                               help='삭제할 거래 id')
+    update_parser = subparsers.add_parser(
+        'update',
+        help='거래 수정 (옵션 기반)',
+        description='지정한 옵션만 변경됩니다(생략한 필드는 유지). '
+                    '--memo ""/--tags ""는 해당 필드를 비웁니다. --tags는 전체 교체입니다.',
+    )
+    update_parser.add_argument('--id', dest='tx_id', required=True, metavar='TX-nnnnnn',
+                               help='수정할 거래 id')
+    update_parser.add_argument('--date', metavar='YYYY-MM-DD', help='거래 날짜')
+    update_parser.add_argument('--type', dest='tx_type', help='income 또는 expense')
+    update_parser.add_argument('--category', help='카테고리 (등록된 것만)')
+    update_parser.add_argument('--amount', type=int, help='금액 (양수)')
+    update_parser.add_argument('--memo', help='메모 ("" = 비우기)')
+    update_parser.add_argument('--tags', help='쉼표 구분 태그 — 전체 교체 ("" = 비우기)')
     return parser
 
 
@@ -265,6 +282,23 @@ def cmd_category(store: Storage, args: argparse.Namespace, parser: argparse.Argu
         parser.parse_args(['category', '--help'])
 
 
+def cmd_delete(store: Storage, tx_id: str) -> None:
+    """delete --id — 삭제된 거래를 보여줘 무엇이 지워졌는지 확인시킨다."""
+    tx = services.delete_transaction(store, tx_id)
+    print(f'[삭제 완료] {tx.id} | {tx.date} | {tx.type} | {tx.category} | {tx.amount:,} | {tx.memo}')
+
+
+def cmd_update(store: Storage, args: argparse.Namespace) -> None:
+    """update --id — 지정한 옵션만 변경, 수정 결과를 한 줄로 보여준다."""
+    tags = models.parse_tags(args.tags) if args.tags is not None else None
+    tx = services.update_transaction(
+        store, args.tx_id,
+        date=args.date, tx_type=args.tx_type, category=args.category,
+        amount=args.amount, memo=args.memo, tags=tags,
+    )
+    print(f'[수정 완료] {tx.id} | {tx.date} | {tx.type} | {tx.category} | {tx.amount:,} | {tx.memo}')
+
+
 def main(argv: list[str] | None = None) -> int:
     """진입점이자 예외의 단일 관문.
 
@@ -295,6 +329,10 @@ def main(argv: list[str] | None = None) -> int:
             cmd_budget(store, args, parser)
         elif args.command == 'category':
             cmd_category(store, args, parser)
+        elif args.command == 'delete':
+            cmd_delete(store, args.tx_id)
+        elif args.command == 'update':
+            cmd_update(store, args)
         elif args.command is None:
             parser.print_help()
         return 0
