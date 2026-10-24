@@ -12,6 +12,7 @@ import csv
 import heapq
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Iterator
 
 from budget_app import models
 from budget_app import storage as st
@@ -53,7 +54,7 @@ def _recency_key(tx: models.Transaction) -> tuple[str, str]:
     return (tx.date, tx.id)
 
 
-def _iter_transactions(store: st.Storage):
+def _iter_transactions(store: st.Storage) -> Iterator[models.Transaction]:
     """저장 레코드를 Transaction 스트림으로 — 모든 조회의 공통 수원(水源)."""
     return (models.Transaction.from_record(r) for r in store.iter_records(st.TRANSACTIONS))
 
@@ -71,7 +72,8 @@ def _iter_transactions(store: st.Storage):
 # - 필터의 직렬 연결이 곧 AND 결합이다: 모든 필터를 통과한 레코드만
 #   소비자에 도달한다.
 
-def _filter_period(stream, date_from: str | None, date_to: str | None):
+def _filter_period(stream: Iterator[models.Transaction], date_from: str | None,
+                   date_to: str | None) -> Iterator[models.Transaction]:
     for tx in stream:
         if date_from is not None and tx.date < date_from:
             continue
@@ -80,19 +82,19 @@ def _filter_period(stream, date_from: str | None, date_to: str | None):
         yield tx
 
 
-def _filter_type(stream, tx_type: str | None):
+def _filter_type(stream: Iterator[models.Transaction], tx_type: str | None) -> Iterator[models.Transaction]:
     for tx in stream:
         if tx_type is None or tx.type == tx_type:
             yield tx
 
 
-def _filter_category(stream, category: str | None):
+def _filter_category(stream: Iterator[models.Transaction], category: str | None) -> Iterator[models.Transaction]:
     for tx in stream:
         if category is None or tx.category == category:
             yield tx
 
 
-def _filter_query(stream, query: str | None):
+def _filter_query(stream: Iterator[models.Transaction], query: str | None) -> Iterator[models.Transaction]:
     """메모 글자 부분일치, 대소문자 무시."""
     needle = query.casefold() if query is not None else None
     for tx in stream:
@@ -100,7 +102,7 @@ def _filter_query(stream, query: str | None):
             yield tx
 
 
-def _filter_tag(stream, tag: str | None):
+def _filter_tag(stream: Iterator[models.Transaction], tag: str | None) -> Iterator[models.Transaction]:
     """태그도 부분일치 + 대소문자 무시 (메모와 같은 철학으로 통일)."""
     needle = tag.casefold() if tag is not None else None
     for tx in stream:
@@ -445,7 +447,7 @@ def export_to_csv(
     return len(transactions)
 
 
-def _read_csv_rows(csv_path: Path):
+def _read_csv_rows(csv_path: Path) -> Iterator[tuple[int, dict]]:
     """교환 CSV를 행 단위로 스트리밍 — (행 번호, dict) yield. 헤더는 먼저 검사한다."""
     with open(csv_path, newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)
