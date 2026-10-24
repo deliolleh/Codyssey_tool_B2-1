@@ -86,7 +86,7 @@ def translates_oserrors(func: Callable) -> Callable:
         target = exc.filename or '저장 파일'
         return StorageError(
             f'{target} 파일 작업을 수행할 수 없습니다 ({exc.strerror or type(exc).__name__})',
-            hint='data 폴더가 존재하는지, 읽기/쓰기 권한이 있는지 확인하세요',
+            hint='경로가 올바른지, 읽기/쓰기 권한이 있는지 확인하세요',
         )
 
     if inspect.isgeneratorfunction(func):

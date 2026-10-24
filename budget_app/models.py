@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import calendar
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Literal
@@ -48,6 +49,14 @@ def validate_year_month(value: str) -> str:
     return value
 
 
+def month_date_range(year_month: str) -> tuple[str, str]:
+    """'YYYY-MM'을 (월초, 월말) 실제 날짜 쌍으로 — 월말은 달마다 다르다(28~31일)."""
+    year_month = validate_year_month(year_month)
+    year, month = int(year_month[:4]), int(year_month[5:7])
+    last_day = calendar.monthrange(year, month)[1]
+    return f'{year_month}-01', f'{year_month}-{last_day:02d}'
+
+
 def validate_type(value: str) -> TransactionType:
     if value not in ('income', 'expense'):
         raise ValidationError(
@@ -71,6 +80,16 @@ def validate_amount(value: str | int) -> int:
             hint='0보다 큰 정수를 입력하세요',
         )
     return amount
+
+
+# import/export 교환 포맷의 고정 스키마 (명세 지정: UTF-8, 헤더 포함)
+CSV_COLUMNS = ('Date', 'Type', 'Category', 'Amount', 'Memo', 'Tags')
+CSV_REQUIRED = ('Date', 'Type', 'Category', 'Amount')
+
+
+def transaction_to_csv_row(tx: 'Transaction') -> list[str]:
+    """Transaction을 교환 CSV의 한 행으로 — id는 스키마에 없어 내보내지 않는다."""
+    return [tx.date, tx.type, tx.category, str(tx.amount), tx.memo, ','.join(tx.tags)]
 
 
 def parse_tags(raw: str) -> list[str]:

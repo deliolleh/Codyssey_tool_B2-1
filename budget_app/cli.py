@@ -90,6 +90,22 @@ def build_parser() -> argparse.ArgumentParser:
     update_parser.add_argument('--amount', type=int, help='금액 (양수)')
     update_parser.add_argument('--memo', help='메모 ("" = 비우기)')
     update_parser.add_argument('--tags', help='쉼표 구분 태그 — 전체 교체 ("" = 비우기)')
+    export_parser = subparsers.add_parser(
+        'export', help='조건에 맞는 거래를 CSV로 내보내기',
+        description='--month 또는 --from/--to 중 한 방식의 기간 조건이 필수입니다 (혼용 불가).',
+    )
+    export_parser.add_argument('--out', dest='out_path', required=True, metavar='FILE.csv',
+                               help='저장할 CSV 경로')
+    export_parser.add_argument('--month', dest='year_month', metavar='YYYY-MM', help='해당 월 전체')
+    export_parser.add_argument('--from', dest='date_from', metavar='YYYY-MM-DD', help='이 날짜부터')
+    export_parser.add_argument('--to', dest='date_to', metavar='YYYY-MM-DD', help='이 날짜까지')
+    import_parser = subparsers.add_parser(
+        'import', help='CSV에서 거래 일괄 등록',
+        description='스키마: Date,Type,Category,Amount,Memo,Tags (헤더 포함, UTF-8). '
+                    '검증 실패 행은 건너뛰고 건수로 보고합니다.',
+    )
+    import_parser.add_argument('--from', dest='csv_path', required=True, metavar='FILE.csv',
+                               help='가져올 CSV 경로')
     return parser
 
 
@@ -299,6 +315,40 @@ def cmd_update(store: Storage, args: argparse.Namespace) -> None:
     print(f'[수정 완료] {tx.id} | {tx.date} | {tx.type} | {tx.category} | {tx.amount:,} | {tx.memo}')
 
 
+def cmd_export(store: Storage, args: argparse.Namespace) -> None:
+    """export — 기존 파일이 있으면 덮어쓰기 전 확인 (결정 9-3)."""
+    out_path = Path(args.out_path)
+    if out_path.exists():
+        answer = input(f"'{out_path}' 파일이 이미 있습니다. 덮어쓸까요? (y/n): ").strip().lower()
+        if answer != 'y':
+            print('[안내] 내보내기를 취소했습니다.')
+            return
+    count = services.export_to_csv(
+        store, out_path,
+        year_month=args.year_month, date_from=args.date_from, date_to=args.date_to,
+    )
+    print(f'[완료] {out_path} ({count} records)')
+
+
+def cmd_import(store: Storage, args: argparse.Namespace) -> None:
+    """import — 미등록 카테고리 사전 확인(결정 9-2) 후 일괄 등록(결정 9-1)."""
+    csv_path = Path(args.csv_path)
+    unregistered = services.scan_csv_categories(store, csv_path)
+    if unregistered:
+        print(f'[안내] CSV에 미등록 카테고리 {len(unregistered)}개: ' + ', '.join(unregistered))
+        answer = input('모두 등록할까요? (y/n): ').strip().lower()
+        if answer == 'y':
+            for name in unregistered:
+                services.add_category(store, name)
+            print(f'[저장 완료] 카테고리 {len(unregistered)}개 등록')
+        else:
+            print('[안내] 등록하지 않습니다 — 해당 카테고리의 행은 건너뜁니다.')
+    report = services.import_from_csv(store, csv_path)
+    print(f'[완료] imported={report.imported}, skipped={len(report.skipped)}')
+    for line_no, cause in report.skipped:
+        print(f'  - {line_no}행: {cause}')
+
+
 def main(argv: list[str] | None = None) -> int:
     """진입점이자 예외의 단일 관문.
 
@@ -333,6 +383,10 @@ def main(argv: list[str] | None = None) -> int:
             cmd_delete(store, args.tx_id)
         elif args.command == 'update':
             cmd_update(store, args)
+        elif args.command == 'export':
+            cmd_export(store, args)
+        elif args.command == 'import':
+            cmd_import(store, args)
         elif args.command is None:
             parser.print_help()
         return 0

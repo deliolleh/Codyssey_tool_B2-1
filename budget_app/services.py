@@ -8,13 +8,15 @@
 """
 from __future__ import annotations
 
+import csv
 import heapq
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from budget_app import models
 from budget_app import storage as st
-from budget_app.decorators import logged, timed
-from budget_app.errors import NotFoundError, ValidationError
+from budget_app.decorators import logged, timed, translates_oserrors
+from budget_app.errors import BudgetError, NotFoundError, ValidationError
 
 # 기본 카테고리: 토스 '내 소비' 대분류를 한 단어로 축약한 기본 카테고리.
 # 계층 없는 1단 평면 구조 — 세분화는 사용자가 category add로 같은 평면에 추가한다.
@@ -227,9 +229,9 @@ def summarize(store: st.Storage, year_month: str) -> MonthSummary:
     MonthSummary 보고서에서 결합된다. 사용률·초과액 등 파생값은 저장하지 않고
     property로 매번 계산한다 (파생값은 저장하지 않는다).
     """
+    first_day, last_day = models.month_date_range(year_month)
     year_month = models.validate_year_month(year_month)
-    # ISO 날짜는 문자열 비교 = 시간 비교라 '-31'이 그 달의 모든 유효 날짜를 덮는다
-    stream = _filter_period(_iter_transactions(store), f'{year_month}-01', f'{year_month}-31')
+    stream = _filter_period(_iter_transactions(store), first_day, last_day)
     summary = MonthSummary(year_month, budget_amount=get_budget(store, year_month))
     for tx in stream:
         summary.transaction_count += 1
@@ -391,6 +393,124 @@ def update_transaction(
         )
 
     return _rewrite_transaction(store, tx_id, apply)
+
+
+# ----- import/export: 외부 교환 CSV (고정 스키마는 models.CSV_COLUMNS) -----
+# 교환 파일은 data/ 밖의 사용자 지정 경로라 저장소(Storage) 소관이 아니다 —
+# 파일 I/O는 여기서 직접 하되, OSError 번역은 같은 데코레이터를 빌린다.
+
+
+def _export_range(year_month: str | None, date_from: str | None, date_to: str | None) -> tuple[str | None, str | None]:
+    """export 조건을 기간으로 정규화. 두 방식 혼용은 오류, 무조건은 오류 (결정 9-3 부속)."""
+    has_month = year_month is not None
+    has_range = date_from is not None or date_to is not None
+    if has_month and has_range:
+        raise ValidationError('--month와 --from/--to는 함께 쓸 수 없습니다',
+                              hint='둘 중 한 방식만 선택하세요')
+    if not has_month and not has_range:
+        raise ValidationError('기간 조건이 필요합니다',
+                              hint='--month YYYY-MM 또는 --from/--to YYYY-MM-DD를 지정하세요')
+    if has_month:
+        return models.month_date_range(year_month)
+    if date_from is not None:
+        date_from = models.validate_date(date_from)
+    if date_to is not None:
+        date_to = models.validate_date(date_to)
+    return date_from, date_to
+
+
+@timed
+@logged
+@translates_oserrors
+def export_to_csv(
+    store: st.Storage,
+    out_path: Path,
+    *,
+    year_month: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> int:
+    """조건에 맞는 거래를 교환 CSV로 저장하고 건수를 돌려준다.
+
+    search의 기간 필터·최신순을 재사용한다. id는 스키마에 없어 내보내지 않으므로
+    export→import 왕복 시 새 id가 발급된다 (명세의 스키마 설계).
+    """
+    date_from, date_to = _export_range(year_month, date_from, date_to)
+    transactions = search_transactions(store, date_from=date_from, date_to=date_to)
+    with open(out_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(models.CSV_COLUMNS)
+        for tx in transactions:
+            writer.writerow(models.transaction_to_csv_row(tx))
+    return len(transactions)
+
+
+def _read_csv_rows(csv_path: Path):
+    """교환 CSV를 행 단위로 스트리밍 — (행 번호, dict) yield. 헤더는 먼저 검사한다."""
+    with open(csv_path, newline='', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        missing = [c for c in models.CSV_REQUIRED if c not in (reader.fieldnames or [])]
+        if missing:
+            raise ValidationError(
+                f'CSV 헤더가 스키마와 다릅니다 (누락: {", ".join(missing)})',
+                hint=f'필요한 헤더: {", ".join(models.CSV_COLUMNS)}',
+            )
+        for line_no, row in enumerate(reader, start=2):  # 1행은 헤더
+            if not any((value or '').strip() for value in row.values()):
+                continue  # 빈 행은 조용히 무시
+            yield line_no, row
+
+
+@translates_oserrors
+def scan_csv_categories(store: st.Storage, csv_path: Path) -> list[str]:
+    """CSV에 등장하는 미등록 카테고리 목록 (결정 9-2의 사전 집계 pass, 등장 순서 보존)."""
+    seen: dict[str, None] = {}
+    for _, row in _read_csv_rows(csv_path):
+        name = (row.get('Category') or '').strip()
+        if name and name not in seen and not category_registered(store, name):
+            seen[name] = None
+    return list(seen)
+
+
+@dataclass
+class ImportReport:
+    """import 결과 — 성공 건수와 실패 행(번호, 원인) 목록 (결정 9-1)."""
+
+    imported: int = 0
+    skipped: list[tuple[int, str]] = field(default_factory=list)
+
+
+@timed
+@logged
+@translates_oserrors
+def import_from_csv(store: st.Storage, csv_path: Path) -> ImportReport:
+    """교환 CSV를 일괄 등록 — 행마다 add_transaction 단일 입구를 지난다.
+
+    실패한 행은 건너뛰고 (행 번호, 원인)을 기록한다 (결정 9-1 스킵+리포트).
+    미등록 카테고리의 사전 처리(일괄 등록 확인)는 cli가 scan_csv_categories로
+    먼저 수행하며, 남아 있으면 해당 행은 여기서 검증 실패로 스킵된다.
+
+    쓰기 전략은 append 가족이다: 행마다 즉시 append되어 각 행이 개별 커밋이고,
+    메모리에는 흐르는 1행과 리포트만 존재한다. 중단 시 "거기까지 진행된 파일"이
+    남으며(재작성 가족의 전부-아니면-전무와 대비), 교환 스키마에 id가 없어
+    같은 CSV를 재실행하면 이미 등록된 행이 중복된다는 점을 사용자가 인지해야 한다.
+    """
+    report = ImportReport()
+    for line_no, row in _read_csv_rows(csv_path):
+        try:
+            add_transaction(
+                store,
+                date=(row.get('Date') or '').strip(),
+                tx_type=(row.get('Type') or '').strip(),
+                category=(row.get('Category') or '').strip(),
+                amount=(row.get('Amount') or '').strip(),
+                memo=(row.get('Memo') or ''),
+                tags=models.parse_tags(row.get('Tags') or ''),
+            )
+            report.imported += 1
+        except BudgetError as err:
+            report.skipped.append((line_no, err.cause))
+    return report
 
 
 def count_category_usage(store: st.Storage, name: str) -> int:
